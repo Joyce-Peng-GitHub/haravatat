@@ -74,7 +74,7 @@ Metadata of both articles and comments:
 
 Metadata of articles only:
 
-- Favorite account.
+- Favorite count.
 - View count.
 
 ## Profiles
