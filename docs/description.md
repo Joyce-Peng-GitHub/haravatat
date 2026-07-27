@@ -1,4 +1,4 @@
-# Harvaratat
+# Haravatat
 
 Haravatat is a multi-user blog system supporting both Markdown and **Typst**.
 
