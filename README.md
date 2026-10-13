@@ -1,5 +1,24 @@
 # Haravatat
 
-多用户 Typst / Markdown 博客，使用 GitHub 登录和 PostgreSQL 存储。
+通过 GitHub 登录的多用户 Typst / Markdown 博客。
 
-开发、架构与实施进度见 [docs/development.md](docs/development.md)。
+- GitHub 仓库 + 指定分支，手动同步；私有仓库使用 PAT。
+- PostgreSQL 虚拟文件系统：目录上传、下载、编辑、删除、移动。
+- 勾选入口发布，Typst 编译为 PDF，Markdown 使用 GFM。
+- PDF 页面竖向连续排列，无工具栏，支持文字选择与链接。
+- 用户工作区隔离；发布失败保留线上版本。
+
+使用 Node.js 24 LTS、React、Fastify、PostgreSQL 18、Typst 0.15.1 和 PDF.js。依赖精确版本见 package-lock.json。
+
+```bash
+npm ci
+cp .env.example .env
+# 填写 PostgreSQL 与 GitHub OAuth 配置
+npm run compiler
+# 另一个终端
+npm run dev
+```
+
+生产使用 `docker compose up --build -d`，需要 HTTPS 反向代理和 GitHub OAuth App。
+
+文档：[部署](docs/deployment.md) · [配置](docs/configuration.md) · [登录](docs/authentication.md) · [文件管理](docs/files.md) · [发布](docs/publishing.md) · [界面](docs/interface.md) · [开发进度](docs/development.md)。示例文件位于 examples/。

@@ -22,7 +22,7 @@ PostgreSQL 保存 GitHub 身份、服务端会话、来源、虚拟文件和发�
 2. 已完成：GitHub OAuth（state + PKCE）、服务端会话、CSRF 防护。
 3. 已完成：上传/下载/编辑/删除/移动、保留目录、仓库分支同步、原子更新。
 4. 已完成：原子发布、独立 Typst 编译服务、PDF 连续阅读、Markdown、响应式工作台。
-5. 待完成：端到端验证、部署说明。
+5. 已完成：桌面/手机与生产静态站点端到端验证、Docker Compose、PostgreSQL CI、部署文档。
 
 Schema 初始化使用事务和 PostgreSQL advisory lock。后续改变已有表结构需要添加明确 ALTER/迁移，不能仅依赖 CREATE TABLE IF NOT EXISTS。
 
