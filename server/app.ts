@@ -8,12 +8,15 @@ import type { Database } from './db.js';
 import { authRoutes } from './auth.js';
 import { githubAuth, type GitHubAuth } from './github.js';
 import { HttpError } from './errors.js';
+import { sourceRoutes } from './sources.js';
+import type { RepositoryClient } from './repository.js';
 export interface AppDependencies {
   db: Database;
   config: Config;
   github?: GitHubAuth;
+  repositories?: RepositoryClient;
 }
-export async function createApp({ db, config, github }: AppDependencies) {
+export async function createApp({ db, config, github, repositories }: AppDependencies) {
   const app = Fastify({
     logger: config.NODE_ENV !== 'test',
     bodyLimit: 2 * 1024 * 1024,
@@ -85,5 +88,6 @@ export async function createApp({ db, config, github }: AppDependencies) {
     config,
     github ?? githubAuth(config.GITHUB_CLIENT_ID, config.GITHUB_CLIENT_SECRET, config.APP_ORIGIN),
   );
+  await sourceRoutes(app, db, repositories);
   return app;
 }
