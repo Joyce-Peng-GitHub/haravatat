@@ -60,6 +60,8 @@ export const nativeCompiler: Compiler = {
         join(directory, 'packages'),
         '--package-cache-path',
         process.env.TYPST_PACKAGE_CACHE || join(directory, 'cache'),
+        '--font-path',
+        root,
         '--jobs',
         '1',
         '--diagnostic-format',

@@ -13,7 +13,7 @@ import {
   MAX_SOURCE_BYTES,
   type SourceFile,
 } from './files.js';
-import { publicRepositories, repositoryName, type RepositoryClient } from './repository.js';
+import { githubRepositories, repositoryName, type RepositoryClient } from './repository.js';
 export interface Source {
   id: string;
   user_id: string;
@@ -55,7 +55,7 @@ async function writeFiles(tx: Database, id: string, files: SourceFile[]) {
 export async function sourceRoutes(
   app: FastifyInstance,
   db: Database,
-  repositories: RepositoryClient = publicRepositories,
+  repositories: RepositoryClient = githubRepositories,
 ) {
   await app.register(multipart, {
     limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES, fields: 0, parts: MAX_FILES },
@@ -225,7 +225,21 @@ export async function sourceRoutes(
         id = sourceId(request.params);
       const source = await ownedSource(db, id, user.id);
       if (source.kind !== 'github') throw new HttpError(409, '这个工作区不来自 GitHub');
-      const snapshot = await repositories.snapshot(source.repository!, source.branch!);
+      const { token } = z
+        .object({
+          token: z
+            .string()
+            .trim()
+            .max(500)
+            .regex(/^[A-Za-z0-9_]*$/)
+            .optional(),
+        })
+        .parse(request.body ?? {});
+      const snapshot = await repositories.snapshot(
+        source.repository!,
+        source.branch!,
+        token || undefined,
+      );
       await db.transaction(async (tx) => {
         const current = await ownedSource(tx, id, user.id, true);
         if (current.revision !== source.revision) throw new HttpError(409, '工作区已更新，请重试');

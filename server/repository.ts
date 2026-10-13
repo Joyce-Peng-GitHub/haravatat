@@ -13,7 +13,7 @@ export interface RepositorySnapshot {
   commit: string;
 }
 export interface RepositoryClient {
-  snapshot(repository: string, branch: string): Promise<RepositorySnapshot>;
+  snapshot(repository: string, branch: string, token?: string): Promise<RepositorySnapshot>;
 }
 export function repositoryName(value: string) {
   const name = value
@@ -113,27 +113,37 @@ export function extractRepository(buffer: Buffer): Promise<SourceFile[]> {
     });
   });
 }
-export const publicRepositories: RepositoryClient = {
-  async snapshot(repository, branch) {
+export const githubRepositories: RepositoryClient = {
+  async snapshot(repository, branch, token) {
     const name = repositoryName(repository);
-    const headers = {
+    const headers: Record<string, string> = {
       Accept: 'application/vnd.github+json',
       'User-Agent': 'haravatat',
-      'X-GitHub-Api-Version': '2022-11-28',
+      'X-GitHub-Api-Version': '2026-03-10',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
-    const request = async (url: string) => {
+    const request = async (
+      url: string,
+      authorize = true,
+      redirect: 'error' | 'manual' = 'error',
+    ) => {
       const response = await fetch(url, {
-        headers,
+        headers: authorize ? headers : { 'User-Agent': 'haravatat' },
         signal: AbortSignal.timeout(30_000),
-        redirect: 'error',
+        redirect,
+      }).catch(() => {
+        throw new HttpError(502, 'GitHub 请求超时或网络不可用');
       });
-      if (!response.ok)
+      if (!response.ok && !(redirect === 'manual' && response.status === 302)) {
         throw new HttpError(
           502,
           response.status === 404
-            ? '未找到公开仓库或分支'
-            : 'GitHub 下载失败或请求额度已用尽，请稍后重试',
+            ? '未找到仓库或分支，请检查名称与 token 权限'
+            : response.status === 401 || response.status === 403
+              ? 'GitHub token 无效、权限不足或请求额度耗尽'
+              : 'GitHub 下载失败，请稍后重试',
         );
+      }
       return response;
     };
     const commitResponse = await request(
@@ -142,8 +152,36 @@ export const publicRepositories: RepositoryClient = {
     const commit = z
       .object({ sha: z.string().regex(/^[0-9a-f]{40}$/) })
       .parse(await commitResponse.json()).sha;
-    const archive = await request(`https://codeload.github.com/${name}/zip/${commit}`);
-    const files = await extractRepository(await boundedBody(archive, MAX_SOURCE_BYTES));
-    return { files, commit };
+    let archive: Response;
+    if (token) {
+      const redirect = await request(
+        `https://api.github.com/repos/${name}/zipball/${commit}`,
+        true,
+        'manual',
+      );
+      if (redirect.status === 302) {
+        const location = redirect.headers.get('location');
+        let target: URL;
+        try {
+          target = new URL(location || '');
+        } catch {
+          throw new HttpError(502, 'GitHub 下载地址无效');
+        }
+        if (
+          target.protocol !== 'https:' ||
+          target.hostname !== 'codeload.github.com' ||
+          target.port ||
+          target.username ||
+          target.password
+        )
+          throw new HttpError(502, 'GitHub 下载地址不在允许范围');
+        archive = await request(target.href, false);
+      } else {
+        archive = redirect;
+      }
+    } else {
+      archive = await request(`https://codeload.github.com/${name}/zip/${commit}`, false);
+    }
+    return { files: await extractRepository(await boundedBody(archive, MAX_SOURCE_BYTES)), commit };
   },
 };

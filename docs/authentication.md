@@ -11,3 +11,5 @@
 API：GET /api/me，GET /auth/github，GET /auth/github/callback，POST /auth/logout。生产必须正确配置 HTTPS，反向代理保留 Cookie 并转发 /api 和 /auth。
 
 验证：集成测试使用 PGlite（PostgreSQL WASM 引擎）执行真实 SQL，覆盖 state 浏览器绑定、PKCE 参数、一次性回调、会话哈希、CSRF 和退出。测试逐文件运行以限制 WASM 内存占用。
+
+私有仓库通过同步时临时输入 PAT 访问；GitHub 登录 token 和仓库 PAT 用途分离，登录不申请 repo scope。未来增加文章权限时可在公开 posts 查询与媒体端点统一加入权限校验，不能只限制阅读页。

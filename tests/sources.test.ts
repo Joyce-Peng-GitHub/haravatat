@@ -39,11 +39,13 @@ test('source operations enforce user isolation and sync transactionally', async 
     [hash('alice'), hash('bob')],
   );
   let failSync = false;
+  let observedToken: string | undefined;
   const app = await createApp({
     db,
     config: loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgres://unused' }),
     repositories: {
-      async snapshot() {
+      async snapshot(_repository, _branch, token) {
+        observedToken = token;
         if (failSync) throw new Error('network failed');
         return {
           commit: 'a'.repeat(40),
@@ -101,7 +103,15 @@ test('source operations enforce user isolation and sync transactionally', async 
         branch: 'feature/blog',
       })
     ).json().source.id;
-    assert.equal((await req('POST', `/api/sources/${repo}/sync`)).statusCode, 200);
+    assert.equal(
+      (await req('POST', `/api/sources/${repo}/sync`, { token: 'github_pat_test' })).statusCode,
+      200,
+    );
+    assert.equal(observedToken, 'github_pat_test');
+    assert.equal(
+      JSON.stringify((await req('GET', `/api/sources/${repo}`)).json()).includes('github_pat_test'),
+      false,
+    );
     assert.equal(
       (await req('GET', `/api/sources/${repo}`)).json().source.commit_sha,
       'a'.repeat(40),
