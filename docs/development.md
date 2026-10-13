@@ -21,7 +21,7 @@ PostgreSQL 保存 GitHub 身份、服务端会话、来源、虚拟文件和发�
 1. 已完成：项目骨架、PostgreSQL schema、事务与初始化接口。
 2. 已完成：GitHub OAuth（state + PKCE）、服务端会话、CSRF 防护。
 3. 已完成：上传/下载/编辑/删除/移动、保留目录、公开仓库分支同步、原子更新。
-4. 待完成：发布、Typst 编译、阅读界面。
+4. 进行中：原子发布、独立 Typst 编译服务已实现，阅读界面待完成。
 5. 待完成：端到端验证、部署说明。
 
 Schema 初始化使用事务和 PostgreSQL advisory lock。后续改变已有表结构需要添加明确 ALTER/迁移，不能仅依赖 CREATE TABLE IF NOT EXISTS。

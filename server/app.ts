@@ -9,14 +9,17 @@ import { authRoutes } from './auth.js';
 import { githubAuth, type GitHubAuth } from './github.js';
 import { HttpError } from './errors.js';
 import { sourceRoutes } from './sources.js';
+import { postRoutes } from './posts.js';
+import { remoteCompiler, type Compiler } from './compile.js';
 import type { RepositoryClient } from './repository.js';
 export interface AppDependencies {
   db: Database;
   config: Config;
   github?: GitHubAuth;
   repositories?: RepositoryClient;
+  compiler?: Compiler;
 }
-export async function createApp({ db, config, github, repositories }: AppDependencies) {
+export async function createApp({ db, config, github, repositories, compiler }: AppDependencies) {
   const app = Fastify({
     logger: config.NODE_ENV !== 'test',
     bodyLimit: 2 * 1024 * 1024,
@@ -89,5 +92,6 @@ export async function createApp({ db, config, github, repositories }: AppDepende
     github ?? githubAuth(config.GITHUB_CLIENT_ID, config.GITHUB_CLIENT_SECRET, config.APP_ORIGIN),
   );
   await sourceRoutes(app, db, repositories);
+  postRoutes(app, db, compiler ?? remoteCompiler(config.COMPILER_URL));
   return app;
 }
