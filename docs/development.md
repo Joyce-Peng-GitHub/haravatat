@@ -19,7 +19,7 @@ PostgreSQL 保存 GitHub 身份、服务端会话、来源、虚拟文件和发�
 ## 阶段
 
 1. 已完成：项目骨架、PostgreSQL schema、事务与初始化接口。
-2. 待完成：GitHub OAuth 与用户隔离。
+2. 已完成：GitHub OAuth（state + PKCE）、服务端会话、CSRF 防护。
 3. 待完成：虚拟文件系统、仓库同步。
 4. 待完成：发布、Typst 编译、阅读界面。
 5. 待完成：端到端验证、部署说明。

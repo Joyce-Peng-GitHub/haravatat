@@ -3,8 +3,12 @@ import type { Database } from '../server/db.js';
 import { migrate } from '../server/db.js';
 export async function testDatabase() {
   const engine = new PGlite();
-  const wrap = (client: Pick<PGlite, 'query' | 'transaction'>): Database => ({
+  const wrap = (client: Pick<PGlite, 'query' | 'transaction' | 'exec'>): Database => ({
     query: async <T extends Record<string, unknown>>(sql: string, params?: unknown[]) => {
+      if (!params && sql.includes(';')) {
+        await client.exec(sql);
+        return { rows: [], rowCount: 0 };
+      }
       const result = await client.query<T>(sql, params);
       return { rows: result.rows, rowCount: result.affectedRows ?? result.rows.length };
     },
