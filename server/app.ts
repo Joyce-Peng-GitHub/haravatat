@@ -30,7 +30,7 @@ export async function createApp({ db, config, github, repositories, compiler }: 
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
+        scriptSrc: ["'self'", "'wasm-unsafe-eval'"],
         workerSrc: ["'self'", 'blob:'],
         imgSrc: ["'self'", 'https:', 'data:'],
         styleSrc: ["'self'", "'unsafe-inline'"],

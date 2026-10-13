@@ -1,0 +1,116 @@
+import { test, expect } from '@playwright/test';
+
+test('public Markdown and multi-page PDF reading work on desktop and mobile', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (error) => errors.push(error.message));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: '最新文章' })).toBeVisible();
+  await expect(page.getByRole('link', { name: '文字、公式与慢思考' })).toBeVisible();
+  await page.screenshot({ path: 'test-results/home.png', fullPage: true });
+  await page.getByRole('link', { name: '文字、公式与慢思考' }).click();
+  await expect(page.locator('.markdown-body table')).toBeVisible();
+  await expect(page.locator('.markdown-body pre')).toContainText('console.log');
+  await page.getByRole('link', { name: '返回文章' }).click();
+  await page.getByRole('link', { name: '关于知识的边界' }).click();
+  await expect(page.locator('.pdf-page')).toHaveCount(2);
+  await expect(page.locator('.pdf-page').first().locator('.textLayer')).toContainText('Knowledge');
+  const geometry = await page.locator('.pdf-page').evaluateAll((elements) =>
+    elements.map((e) => {
+      const r = e.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom, width: r.width };
+    }),
+  );
+  expect(Math.abs(geometry[1].top - geometry[0].bottom)).toBeLessThan(1);
+  expect(await page.locator('iframe,[role=toolbar]').count()).toBe(0);
+  await page.screenshot({ path: 'test-results/pdf-reader.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.pdf-page').first().locator('.textLayer')).toContainText('Knowledge');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: 'test-results/mobile-pdf.png', fullPage: true });
+  expect(errors).toEqual([]);
+});
+
+test('OAuth login, folder upload, editing, selection, publishing and GitHub sync', async ({
+  page,
+}) => {
+  await page.route(/\/auth\/github$/, async (route) => {
+    const response = await route.fetch({ maxRedirects: 0 });
+    const state = new URL(response.headers().location).searchParams.get('state');
+    await route.fulfill({
+      response,
+      headers: {
+        ...response.headers(),
+        location: `${new URL(route.request().url()).origin}/auth/github/callback?code=test&state=${state}`,
+      },
+    });
+  });
+  await page.goto('/dashboard');
+  await page.getByRole('link', { name: '通过 GitHub 登录' }).click();
+  await expect(page.getByRole('heading', { name: /我的工作台/ })).toBeVisible();
+  await page.getByRole('button', { name: '新建来源' }).click();
+  await page.getByLabel('来源名称').fill('浏览器测试笔记');
+  await page.getByRole('button', { name: '创建来源' }).click();
+  await expect(page.getByRole('heading', { name: '浏览器测试笔记' })).toBeVisible();
+  await page.getByLabel('上传目标目录').fill('notes');
+  await page
+    .locator('input[type=file]')
+    .first()
+    .setInputFiles([
+      {
+        name: 'article.md',
+        mimeType: 'text/markdown',
+        buffer: Buffer.from('# 浏览器发布\n\n**你好，世界**\n<script>window.xss=1</script>'),
+      },
+      {
+        name: 'dependency.typ',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('= Private dependency'),
+      },
+    ]);
+  await expect(page.getByText('notes/article.md', { exact: true })).toBeVisible();
+  await page.getByRole('checkbox', { name: '发布 notes/article.md' }).check();
+  await page.getByLabel('notes/article.md 的文章标题').fill('浏览器发布');
+  await page.getByRole('button', { name: '发布所选文章' }).click();
+  await expect(page.getByText('发布成功，文章已出现在首页。')).toBeVisible();
+  await page.screenshot({ path: 'test-results/dashboard.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: 'test-results/mobile-dashboard.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1050 });
+  await page.getByRole('link', { name: '阅读', exact: true }).click();
+  await expect(page.locator('.markdown-body strong')).toHaveText('你好，世界');
+  expect(await page.evaluate(() => 'xss' in window)).toBe(false);
+  await page.getByRole('link', { name: '我的工作台' }).click();
+  await page.getByRole('button', { name: /浏览器测试笔记/ }).click();
+  const row = page.locator('.file-row').filter({ hasText: 'notes/article.md' });
+  await row.getByRole('button', { name: '编辑', exact: true }).click();
+  await page.getByLabel('文件内容').fill('# Updated draft\n\n草稿更新后需要重新发布。');
+  await page.getByRole('button', { name: '保存草稿' }).click();
+  await expect(page.getByText('草稿已保存，发布后线上版本才会更新。')).toBeVisible();
+  await page.getByRole('checkbox', { name: '发布 notes/dependency.typ' }).check();
+  await page.getByLabel('notes/dependency.typ 的文章标题').fill('浏览器 Typst');
+  await page.getByRole('button', { name: '发布所选文章' }).click();
+  await expect(page.getByText('发布成功，文章已出现在首页。')).toBeVisible();
+  await page
+    .locator('.file-row')
+    .filter({ hasText: 'notes/dependency.typ' })
+    .getByRole('link', { name: '阅读', exact: true })
+    .click();
+  await expect(page.locator('.pdf-page .textLayer')).toContainText('Private dependency');
+  await page.getByRole('link', { name: '我的工作台' }).click();
+  await page.getByRole('button', { name: '新建来源' }).click();
+  await page.getByRole('button', { name: 'GitHub 仓库', exact: true }).click();
+  await page.getByLabel('来源名称').fill('GitHub 来源测试');
+  await page.getByLabel('仓库地址').fill('writer/notes');
+  await page.getByLabel('分支名').fill('feature/blog');
+  await page.getByRole('button', { name: '创建来源' }).click();
+  await page.getByLabel('私有仓库访问 token').fill('github_pat_test');
+  await page.getByRole('button', { name: '同步分支' }).click();
+  await expect(page.getByText('remote.md', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('私有仓库访问 token')).toHaveValue('');
+  await expect(page.getByRole('button', { name: '上传文件', exact: true })).toHaveCount(0);
+});
