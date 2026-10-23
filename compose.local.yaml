@@ -1,0 +1,6 @@
+# Local HTTP preview only; production uses compose.yaml without this override.
+services:
+  app:
+    environment:
+      NODE_ENV: development
+      APP_ORIGIN: http://localhost:3000

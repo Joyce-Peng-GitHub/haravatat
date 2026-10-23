@@ -14,3 +14,5 @@ Node.js 使用 24 LTS。复制 .env.example 为 .env，填写 GitHub OAuth App �
 APP_ORIGIN 不允许路径、查询串或内嵌凭据，生产环境必须使用 HTTPS。Cookie 的 Secure 标记由 APP_ORIGIN 决定。
 
 Docker Compose 另需 POSTGRES_PASSWORD（URL 安全字符），不会使用开发 .env 中 DATABASE_URL；APP_ORIGIN 必须 HTTPS。编译服务支持 COMPILER_HOST / COMPILER_PORT、TYPST_BIN、TYPST_PACKAGE_CACHE，这些仅配置到编译容器或开发编译进程，不能通过用户请求指定。详细见 deployment.md。
+
+Compose 中 GitHub 凭据可留空，以便先验证公开阅读、数据库和编译服务；这时无法登录或管理工作区。获得真实 OAuth App 凭据后填写 .env，再执行相同 Compose 文件的 up -d 以重新创建应用容器。

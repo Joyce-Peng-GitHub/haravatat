@@ -51,6 +51,26 @@ docker run --rm --user 0 -v "$PWD:/work:ro" -v haravatat_typst_packages:/package
 - 草稿和发布快照存 PostgreSQL bytea；按用户限制 20 个来源、每来源 50 MiB/1000 文件，最多 30 个发布入口，PDF 最多 32 MiB。全站注册人数没有管理配额，公开开放前需按实际服务预算增加运营控制。
 - GitHub LFS/submodule 和 Markdown front matter、数学扩展暂不支持。
 - PDF 在手机上按宽度缩放，文字不重排；长文档使用按需 canvas 渲染。
-- 本地测试验证了业务与真实 Typst/PDF 渲染；Docker 镜像仍需在可运行 Docker 的环境实测，真实 GitHub OAuth 需自己的 OAuth App 凭据。Compose config 已通过无 daemon 的语法与变量校验。真实 GitHub 仓库下载已验证固定 commit 与带认证 ZIP 重定向链路；未认证共享 IP 额度耗尽时可提供 PAT。
+- 已在 Docker Desktop 实测镜像构建与三服务启动，真实 GitHub OAuth 仍需自己的 OAuth App 凭据。Compose config 已通过无 daemon 的语法与变量校验。真实 GitHub 仓库下载已验证固定 commit 与带认证 ZIP 重定向链路；未认证共享 IP 额度耗尽时可提供 PAT。
 
 CI 使用 PostgreSQL 18 service，通过 TEST_DATABASE_URL 让同一组集成/浏览器测试使用真实 pg 驱动。每个测试 fixture 创建独立 schema，完成后清理；本地未设置该变量时使用 PGlite。仅向专用测试数据库提供该变量，需拥有 CREATE SCHEMA 权限，不能使用生产库。
+
+## Docker Desktop 本地预览
+
+未配置 GitHub OAuth 时也可启动服务，登录端点明确返回未配置状态。创建仅本机使用的 .env，设置随机 POSTGRES_PASSWORD；GitHub 凭据可以留空，然后运行：
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
+```
+
+打开 http://localhost:3000。compose.local.yaml 仅将应用切换为 development 模式以允许本地 HTTP，使用构建后的静态页面；保留数据库/编译网络隔离和只读容器限制。生产继续单独使用 compose.yaml 和 HTTPS APP_ORIGIN。配置登录时使用回调 http://localhost:3000/auth/github/callback。
+
+.env 不提交到 Git。停止服务使用相同 Compose 文件执行 stop；重新启动使用 start。不要使用 down -v，除非确实要删除数据库。
+
+### Docker 实测记录（2026-10-23）
+
+- Docker Desktop 4.89.0 / Engine 29.7.2：app、db、compiler 均为 healthy。
+- 宿主机直连 http://127.0.0.1:3000/api/health 返回 {"ok":true}，首页 HTTP 200；未配置 OAuth 时 /api/me 返回 loginConfigured=false。
+- 通过应用 API 写入临时工作区、发布 Markdown 与 Typst，验证真实 PostgreSQL 存储和远程编译服务。中文 CJK 字体、跨目录 include、显式分页编译成功，PDF 为 15120 bytes。
+- 将入口改为越界 read 后发布返回 422，已发布 PDF 字节保持一致。临时用户及其工作区、会话、文章已级联清理，预览数据库不保留测试内容。
+- 运行镜像的 npm audit --omit=dev 报告 Fastify 5.12.5 的一项 low 告警（GHSA-389g-gv7q-r4x8，header propertyNames 大小写校验）；本次未修改依赖锁，后续依赖升级时处理。
