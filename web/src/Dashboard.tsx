@@ -25,8 +25,10 @@ export function Dashboard() {
     [filter, setFilter] = useState(''),
     [prefix, setPrefix] = useState('');
   const [repoToken, setRepoToken] = useState('');
+  const [repoUsername, setRepoUsername] = useState('');
+  const [repoCommit, setRepoCommit] = useState('');
   const [creating, setCreating] = useState(false),
-    [kind, setKind] = useState<'upload' | 'github'>('upload');
+    [kind, setKind] = useState<'upload' | 'git'>('upload');
   const [editor, setEditor] = useState<{ path: string; content: string; original?: string } | null>(
       null,
     ),
@@ -40,6 +42,7 @@ export function Dashboard() {
   const loadWorkspace = async (id: string) => {
     const result = await api<Workspace>(`/api/sources/${id}`);
     setWorkspace(result);
+    setRepoCommit(result.source.target_commit || '');
     setSelected(
       Object.fromEntries(
         result.posts
@@ -70,6 +73,8 @@ export function Dashboard() {
     setSuccess('');
     setFilter('');
     setRepoToken('');
+    setRepoUsername('');
+    setRepoCommit('');
     setSelected({});
     if (!sourceId || !user) return;
     const controller = new AbortController();
@@ -77,6 +82,7 @@ export function Dashboard() {
     api<Workspace>(`/api/sources/${sourceId}`, { signal: controller.signal })
       .then((result) => {
         setWorkspace(result);
+        setRepoCommit(result.source.target_commit || '');
         setSelected(
           Object.fromEntries(
             result.posts
@@ -118,10 +124,11 @@ export function Dashboard() {
           body: {
             kind,
             name: String(values.get('name')),
-            ...(kind === 'github'
+            ...(kind === 'git'
               ? {
                   repository: String(values.get('repository')),
                   branch: String(values.get('branch')),
+                  commit: String(values.get('commit') || '') || undefined,
                 }
               : {}),
           },
@@ -130,7 +137,7 @@ export function Dashboard() {
         setCreating(false);
         setParams({ source: result.source.id });
       },
-      kind === 'github' ? '仓库来源已创建，点击同步以获取文件。' : '工作区已创建，可以上传文件了。',
+      kind === 'git' ? '仓库来源已创建，点击同步以获取文件。' : '工作区已创建，可以上传文件了。',
     );
   };
   const upload = (files: FileList | null) => {
@@ -287,12 +294,14 @@ export function Dashboard() {
               onClick={() => setParams({ source: item.id })}
             >
               <span className="source-icon" aria-hidden="true">
-                {item.kind === 'github' ? '↗' : '▤'}
+                {item.kind !== 'upload' ? '↗' : '▤'}
               </span>
               <span>
                 <strong>{item.name}</strong>
                 <small>
-                  {item.kind === 'github' ? `${item.repository} · ${item.branch}` : '上传工作区'}
+                  {item.kind !== 'upload'
+                    ? `${item.repository} · ${item.target_commit ? item.target_commit.slice(0, 7) : item.branch}`
+                    : '上传工作区'}
                   <br />
                   {item.file_count ?? 0} 文件 · {item.post_count ?? 0} 已发布
                 </small>
@@ -323,11 +332,11 @@ export function Dashboard() {
               <div className="workspace-top">
                 <div>
                   <span className="eyebrow">
-                    {source.kind === 'github' ? 'GITHUB REPOSITORY' : 'VIRTUAL WORKSPACE'}
+                    {source.kind !== 'upload' ? 'GIT REPOSITORY' : 'VIRTUAL WORKSPACE'}
                   </span>
                   <h2>{source.name}</h2>
                   <p className="muted">
-                    {source.kind === 'github' ? (
+                    {source.kind !== 'upload' ? (
                       <>
                         {source.repository} / {source.branch}{' '}
                         {source.commit_sha && <code>· {source.commit_sha.slice(0, 7)}</code>}
@@ -337,7 +346,7 @@ export function Dashboard() {
                     )}
                   </p>
                 </div>
-                {source.kind === 'github' && (
+                {source.kind !== 'upload' && (
                   <button
                     className="button secondary"
                     disabled={Boolean(busy)}
@@ -347,9 +356,14 @@ export function Dashboard() {
                         async () => {
                           await api(`/api/sources/${source.id}/sync`, {
                             method: 'POST',
-                            body: { token: repoToken || undefined },
+                            body: {
+                              token: repoToken || undefined,
+                              username: repoUsername || undefined,
+                              commit: repoCommit.trim(),
+                            },
                           });
                           setRepoToken('');
+                          setRepoUsername('');
                           await loadWorkspace(source.id);
                           await loadSources();
                         },
@@ -357,25 +371,53 @@ export function Dashboard() {
                       )
                     }
                   >
-                    ↻ 同步分支
+                    ↻ 同步仓库
                   </button>
                 )}
               </div>
-              {source.kind === 'github' && (
+              {source.kind !== 'upload' && (
                 <div className="repository-token">
-                  <label>
-                    私有仓库访问 token
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      aria-label="私有仓库访问 token"
-                      placeholder="Personal access token（公开仓库可留空）"
-                      value={repoToken}
-                      disabled={Boolean(busy)}
-                      onChange={(event) => setRepoToken(event.target.value)}
-                    />
-                  </label>
-                  <p>仅用于本次同步，不在服务器保存。勾选发布的内容将公开。</p>
+                  <div className="repository-fields">
+                    <label>
+                      Commit SHA（可选）
+                      <input
+                        aria-label="同步 Commit SHA"
+                        placeholder="留空跟随分支，或填写完整 Commit SHA"
+                        value={repoCommit}
+                        maxLength={64}
+                        disabled={Boolean(busy)}
+                        onChange={(event) => setRepoCommit(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      仓库用户名（可选）
+                      <input
+                        aria-label="仓库用户名"
+                        placeholder="按 Git 服务要求填写"
+                        value={repoUsername}
+                        maxLength={200}
+                        autoComplete="off"
+                        disabled={Boolean(busy)}
+                        onChange={(event) => setRepoUsername(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      私有仓库访问 token
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        aria-label="私有仓库访问 token"
+                        placeholder="Token 或 HTTPS 密码（公开仓库可留空）"
+                        value={repoToken}
+                        disabled={Boolean(busy)}
+                        onChange={(event) => setRepoToken(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <p>
+                    Commit 留空则同步分支最新版本。用户名与 token
+                    仅用于本次同步，不在服务器保存；勾选发布的内容将公开。
+                  </p>
                 </div>
               )}
               {source.kind === 'upload' && (
@@ -460,7 +502,7 @@ export function Dashboard() {
                 {!workspace.files.length ? (
                   <div className="empty">
                     <p>
-                      {source.kind === 'github'
+                      {source.kind !== 'upload'
                         ? '点击「同步分支」获取仓库文件。'
                         : '还没有文件，上传或新建一篇文章吧。'}
                     </p>
@@ -641,11 +683,8 @@ export function Dashboard() {
               >
                 上传工作区
               </button>
-              <button
-                className={kind === 'github' ? 'active' : ''}
-                onClick={() => setKind('github')}
-              >
-                GitHub 仓库
+              <button className={kind === 'git' ? 'active' : ''} onClick={() => setKind('git')}>
+                Git 仓库
               </button>
             </div>
             <form onSubmit={createSource}>
@@ -653,23 +692,33 @@ export function Dashboard() {
                 来源名称
                 <input required name="name" maxLength={120} placeholder="例如：我的数学笔记" />
               </label>
-              {kind === 'github' && (
+              {kind === 'git' && (
                 <>
                   <label>
                     仓库地址
                     <input
                       required
                       name="repository"
-                      placeholder="owner/repository"
-                      maxLength={300}
+                      placeholder="https://git.example.com/group/repository.git"
+                      maxLength={2048}
                     />
                   </label>
                   <label>
                     分支名
                     <input required name="branch" defaultValue="main" maxLength={200} />
                   </label>
+                  <label>
+                    Commit SHA（可选）
+                    <input
+                      name="commit"
+                      maxLength={64}
+                      pattern="[a-fA-F0-9]{40}|[a-fA-F0-9]{64}"
+                      placeholder="完整 SHA；留空使用分支最新提交"
+                    />
+                  </label>
                   <p className="muted">
-                    创建后手动同步；私有仓库可输入 PAT。文件在此只读，文章发布后公开。
+                    支持任意公网 HTTPS Git 仓库，也可填写 GitHub 的 owner/repository
+                    简写。创建后手动同步，私有仓库可输入用户名与 token。文章发布后公开。
                   </p>
                 </>
               )}

@@ -50,11 +50,12 @@ export interface Post {
 export interface Source {
   id: string;
   name: string;
-  kind: 'upload' | 'github';
+  kind: 'upload' | 'github' | 'git';
   repository: string | null;
   branch: string | null;
   revision: number;
   commit_sha: string | null;
+  target_commit: string | null;
   file_count?: number;
   post_count?: number;
 }

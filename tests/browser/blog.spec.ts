@@ -25,14 +25,14 @@ test('public Markdown and multi-page PDF reading work on desktop and mobile', as
   await page.screenshot({ path: 'test-results/pdf-reader.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(page.locator('.pdf-page').first().locator('.textLayer')).toContainText('Knowledge');
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true);
   await page.screenshot({ path: 'test-results/mobile-pdf.png', fullPage: true });
   expect(errors).toEqual([]);
 });
 
-test('OAuth login, folder upload, editing, selection, publishing and GitHub sync', async ({
+test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git sync with pinned commits', async ({
   page,
 }) => {
   await page.route(/\/auth\/github$/, async (route) => {
@@ -103,14 +103,29 @@ test('OAuth login, folder upload, editing, selection, publishing and GitHub sync
   await expect(page.locator('.pdf-page .textLayer')).toContainText('Private dependency');
   await page.getByRole('link', { name: '我的工作台' }).click();
   await page.getByRole('button', { name: '新建来源' }).click();
-  await page.getByRole('button', { name: 'GitHub 仓库', exact: true }).click();
-  await page.getByLabel('来源名称').fill('GitHub 来源测试');
-  await page.getByLabel('仓库地址').fill('writer/notes');
+  await page.getByRole('button', { name: 'Git 仓库', exact: true }).click();
+  await page.getByLabel('来源名称').fill('GitLab 来源测试');
+  await page.getByLabel('仓库地址').fill('https://gitlab.com/writer/group/notes.git');
   await page.getByLabel('分支名').fill('feature/blog');
+  await page.getByLabel('Commit SHA（可选）', { exact: true }).fill('a'.repeat(40));
   await page.getByRole('button', { name: '创建来源' }).click();
-  await page.getByLabel('私有仓库访问 token').fill('github_pat_test');
-  await page.getByRole('button', { name: '同步分支' }).click();
+  await expect(page.getByLabel('同步 Commit SHA')).toHaveValue('a'.repeat(40));
+  await page.getByLabel('私有仓库访问 token').fill('private.token+/=');
+  await page.getByLabel('仓库用户名', { exact: true }).fill('oauth2');
+  await page.getByRole('button', { name: '同步仓库' }).click();
   await expect(page.getByText('remote.md', { exact: true })).toBeVisible();
   await expect(page.getByLabel('私有仓库访问 token')).toHaveValue('');
+  await expect(page.getByLabel('仓库用户名', { exact: true })).toHaveValue('');
+  await page.getByLabel('同步 Commit SHA').fill('c'.repeat(40));
+  await page.getByRole('button', { name: '同步仓库' }).click();
+  await expect(page.locator('.workspace-top code')).toContainText('ccccccc');
+  await page.getByLabel('同步 Commit SHA').fill('');
+  await page.getByRole('button', { name: '同步仓库' }).click();
+  await expect(page.locator('.workspace-top code')).toContainText('bbbbbbb');
+  await expect(page.getByLabel('同步 Commit SHA')).toHaveValue('');
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
   await expect(page.getByRole('button', { name: '上传文件', exact: true })).toHaveCount(0);
 });

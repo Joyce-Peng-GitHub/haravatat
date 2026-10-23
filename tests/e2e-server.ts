@@ -7,6 +7,7 @@ import { loadConfig } from '../server/config.js';
 import { nativeCompiler } from '../server/compile.js';
 import { readFile } from 'node:fs/promises';
 const { db, close } = await testDatabase();
+const apiPort = Number(process.env.E2E_API_PORT || 3000);
 const source = randomUUID();
 await db.query(
   "INSERT INTO users VALUES (101,'writer','知识的旅人','https://avatars.githubusercontent.com/u/101')",
@@ -31,7 +32,7 @@ const app = await createApp({
     NODE_ENV: 'test',
     DATABASE_URL: 'postgres://unused',
     APP_ORIGIN:
-      process.env.E2E_PRODUCTION === '1' ? 'http://127.0.0.1:3000' : 'http://127.0.0.1:5173',
+      process.env.E2E_PRODUCTION === '1' ? `http://127.0.0.1:${apiPort}` : 'http://127.0.0.1:5173',
     GITHUB_CLIENT_ID: 'test',
     GITHUB_CLIENT_SECRET: 'test',
   }),
@@ -47,10 +48,15 @@ const app = await createApp({
   },
   compiler: nativeCompiler,
   repositories: {
-    async snapshot() {
+    async snapshot(_repository, _branch, _token, _username, commit) {
       return {
-        commit: 'b'.repeat(40),
-        files: [{ path: 'remote.md', content: Buffer.from('# 仓库中的文章\n\n已同步精确分支。') }],
+        commit: commit || 'b'.repeat(40),
+        files: [
+          {
+            path: 'remote.md',
+            content: Buffer.from(`# 仓库中的文章\n\n${commit ? '固定 Commit' : '分支快照'}`),
+          },
+        ],
       };
     },
   },
@@ -63,7 +69,7 @@ if (process.env.E2E_PRODUCTION === '1') {
       : reply.sendFile('index.html'),
   );
 }
-await app.listen({ host: '127.0.0.1', port: 3000 });
+await app.listen({ host: '127.0.0.1', port: apiPort });
 for (const signal of ['SIGINT', 'SIGTERM'] as const)
   process.on(signal, async () => {
     await app.close();

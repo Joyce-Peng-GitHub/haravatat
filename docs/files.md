@@ -21,7 +21,7 @@ Git 仓库来源填写完整 HTTPS 克隆地址（任意公网 Git 服务，如 
 - PUT /api/sources/:id/file：JSON {path, content}，创建/编辑文本
 - DELETE /api/sources/:id/file?path=...：删除文件或目录
 - POST /api/sources/:id/move：JSON {from, to}
-- POST /api/sources/:id/sync：同步指定仓库分支
+- POST /api/sources/:id/sync：同步仓库分支或指定 Commit
 
 所有管理 API 要求登录，跨用户请求返回 404，不泄露是否存在。请求体与 CSRF 要求见 authentication.md。
 
@@ -38,3 +38,5 @@ POST /api/sources/:id/sync 可带 JSON {token: "...", username: "..."}。token �
 ### 固定 Commit
 
 新建仓库可提供可选 commit（完整 40 或 64 位十六进制 SHA，不接受缩写）；不填时使用 branch（默认 main）。target_commit 保存所选目标，commit_sha 保存上次实际同步结果。同步请求可带 commit 切换目标，省略沿用目标、空字符串恢复跟随分支；成功后在同一事务中更新文件与目标，失败保留原目标和快照。可在同步时选择已不在当前分支上的旧提交，但远端需允许按该 SHA 获取对象；不存在或服务不允许获取的 SHA 会明确失败。发布仍需用户再次勾选确认，切换提交不会自动替换已发布文章。
+
+浏览器在同步成功/切换来源后清空用户名与 token，仅将 Commit 目标保留用于下次同步。界面及浏览器测试覆盖 GitLab 多级 HTTPS 地址、私有认证输入、固定 Commit、切换 Commit、恢复分支和手机布局。

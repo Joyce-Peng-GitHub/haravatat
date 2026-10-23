@@ -1256,3 +1256,17 @@ em {
   color: var(--muted);
   margin-top: 8px;
 }
+
+.repository-fields {
+  display: grid;
+  grid-template-columns: 2fr 1fr 2fr;
+  gap: 12px;
+}
+.repository-fields label {
+  min-width: 0;
+}
+@media (max-width: 760px) {
+  .repository-fields {
+    grid-template-columns: 1fr;
+  }
+}

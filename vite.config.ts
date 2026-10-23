@@ -5,6 +5,7 @@ import { createReadStream } from 'node:fs';
 import { resolve, extname } from 'node:path';
 const pdfRoot = resolve('node_modules/pdfjs-dist');
 const folders = ['cmaps', 'standard_fonts', 'wasm'];
+const apiOrigin = `http://127.0.0.1:${process.env.E2E_API_PORT || '3000'}`;
 export default defineConfig({
   plugins: [
     react(),
@@ -41,5 +42,5 @@ export default defineConfig({
   ],
   root: 'web',
   build: { outDir: '../dist', emptyOutDir: true },
-  server: { proxy: { '/api': 'http://127.0.0.1:3000', '/auth': 'http://127.0.0.1:3000' } },
+  server: { proxy: { '/api': apiOrigin, '/auth': apiOrigin } },
 });
