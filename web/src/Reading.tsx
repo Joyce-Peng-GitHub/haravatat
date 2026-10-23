@@ -232,9 +232,9 @@ export function Article() {
                   return safe;
                 }}
                 components={{
-                  a: ({ children, href }) =>
+                  a: ({ node: _node, children, href, ...props }) =>
                     href ? (
-                      <a href={href} rel="noopener noreferrer">
+                      <a {...props} href={href} rel="noopener noreferrer">
                         {children}
                       </a>
                     ) : (
