@@ -41,11 +41,12 @@ test('publication snapshots selected entries and assets, preserves previous post
     await req('PUT', `${base}/file`, {
       path: 'notes/hello.md',
       content:
-        '# Heading\n\n![plot](../plot.png)\n\n[Other](other.typ)\n\n[Secret](../secret.txt)\n\n<script>alert(1)</script>',
+        '# Heading\n\n![plot](../plot.png)\n\n[Other](other.typ)\n\n[Secret](../secret.txt)\n\n[unused]: ../private.png\n\n[^unused]: ![hidden](../private.png)\n\n[visible][image]\n\n[image]: ../plot.png\n\n[image]: ../private.png\n\n<script>alert(1)</script>',
     });
     await req('PUT', `${base}/file`, { path: 'notes/other.typ', content: '= Other' });
     await req('PUT', `${base}/file`, { path: 'plot.png', content: 'image snapshot' });
     await req('PUT', `${base}/file`, { path: 'secret.txt', content: 'private content' });
+    await req('PUT', `${base}/file`, { path: 'private.png', content: 'private image bytes' });
     const payload = {
       entries: [{ path: 'notes/hello.md' }, { path: 'notes/other.typ', title: 'Typst title' }],
     };
@@ -58,6 +59,7 @@ test('publication snapshots selected entries and assets, preserves previous post
     assert.match(publicPost.markdown, new RegExp(`/api/posts/${md.id}/assets/plot.png`));
     assert.equal((await app.inject(`/api/posts/${md.id}/assets/plot.png`)).body, 'image snapshot');
     assert.equal((await app.inject(`/api/posts/${md.id}/assets/secret.txt`)).statusCode, 404);
+    assert.equal((await app.inject(`/api/posts/${md.id}/assets/private.png`)).statusCode, 404);
     assert.equal((await app.inject(`/api/posts/${typ.id}/pdf`)).body, '%PDF-test');
     await req('PUT', `${base}/file`, { path: 'notes/hello.md', content: '# Changed' });
     compileFails = true;

@@ -188,3 +188,25 @@ test('TOC expands only standalone top-level markers and titles have anchors with
   assert(!untrusted.includes('<script>'));
   assert(untrusted.includes('&lt;script&gt;'));
 });
+
+test('only rendered references and reachable footnotes publish local image assets', () => {
+  for (const source of [
+    '# Public\n\nVisible text only.\n\n[unused]: private.png',
+    '# Public\n\n[^unused]: ![private](private.png)',
+    '# Public\n\n[visible][image]\n\n[image]: https://example.com/public.png\n\n[image]: private.png',
+  ]) {
+    const { assets } = publishAndRead(source);
+    assert.equal(assets.length, 0, source);
+  }
+  for (const source of [
+    '![image][used]\n\n[used]: private.png',
+    '[used][]\n\n[used]: private.png',
+    '[used]\n\n[used]: private.png',
+    '正文[^note]\n\n[^note]: ![image][used]\n\n[used]: private.png',
+    '正文[^first]\n\n[^first]: 另一条脚注[^second]\n\n[^second]: ![image](private.png)',
+  ]) {
+    const { assets, html } = publishAndRead(source);
+    assert.equal(assets.length, 1, source);
+    assert(html.includes('/api/posts/post-id/assets/private.png'), source);
+  }
+});

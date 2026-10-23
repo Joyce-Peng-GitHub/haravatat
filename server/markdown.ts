@@ -4,7 +4,8 @@ import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import { remarkBracketMath } from '../shared/markdown.js';
 import remarkStringify from 'remark-stringify';
-import { visit } from 'unist-util-visit';
+import { SKIP, visit } from 'unist-util-visit';
+import type { Definition, FootnoteDefinition, Image, Link, Nodes } from 'mdast';
 import { posix } from 'node:path';
 import type { SourceFile } from './files.js';
 const mediaTypes: Record<string, string> = {
@@ -47,17 +48,42 @@ export function renderMarkdown(
       }
     }
   });
+  // Match rendering semantics: the first definition wins, and unused
+  // definitions/footnotes must not make private dependency bytes public.
+  const definitions = new Map<string, Definition>();
+  const footnotes = new Map<string, FootnoteDefinition>();
   visit(tree, (node) => {
-    if (node.type !== 'image' && node.type !== 'link' && node.type !== 'definition') return;
+    if (node.type === 'definition' && !definitions.has(node.identifier.toUpperCase()))
+      definitions.set(node.identifier.toUpperCase(), node);
+    if (node.type === 'footnoteDefinition' && !footnotes.has(node.identifier.toUpperCase()))
+      footnotes.set(node.identifier.toUpperCase(), node);
+  });
+  const resources = new Set<Image | Link | Definition>();
+  const referencedNotes = new Set<string>();
+  const collectResources = (root: Nodes) =>
+    visit(root, (node) => {
+      if (node.type === 'definition' || node.type === 'footnoteDefinition') return SKIP;
+      if (node.type === 'image' || node.type === 'link') resources.add(node);
+      if (node.type === 'imageReference' || node.type === 'linkReference') {
+        const definition = definitions.get(node.identifier.toUpperCase());
+        if (definition) resources.add(definition);
+      }
+      if (node.type === 'footnoteReference') referencedNotes.add(node.identifier.toUpperCase());
+    });
+  collectResources(tree);
+  // Set iteration also visits notes discovered inside another referenced note.
+  for (const identifier of referencedNotes)
+    for (const child of footnotes.get(identifier)?.children || []) collectResources(child);
+  for (const node of resources) {
     const url = node.url;
     if (!url || url.startsWith('#') || /^[a-z][a-z\d+.-]*:/i.test(url) || url.startsWith('//'))
-      return;
+      continue;
     try {
       const resolved = new URL(url, `https://workspace.invalid/${entry}`);
       const path = decodeURIComponent(resolved.pathname.slice(1));
       if (posts.has(path)) {
         node.url = `/p/${posts.get(path)}${resolved.hash}`;
-        return;
+        continue;
       }
       const file = files.find((f) => f.path === path);
       const type = mediaTypes[posix.extname(path).toLowerCase()];
@@ -70,7 +96,7 @@ export function renderMarkdown(
     } catch {
       node.url = '';
     }
-  });
+  }
   return {
     content: Buffer.from(processor.stringify(tree)),
     title: title.slice(0, 200),
