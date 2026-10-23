@@ -119,10 +119,50 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
   await expect(page.getByLabel('同步 Commit SHA')).toHaveValue('a'.repeat(40));
   await page.getByLabel('私有仓库访问 token').fill('private.token+/=');
   await page.getByLabel('仓库用户名', { exact: true }).fill('oauth2');
+  await page.getByRole('button', { name: '保存凭据', exact: true }).click();
+  await expect(page.getByText('服务器已保存加密凭据', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('私有仓库访问 token')).toHaveValue('');
   await page.getByRole('button', { name: '同步仓库' }).click();
   await expect(page.getByText('remote.md', { exact: true })).toBeVisible();
   await expect(page.getByLabel('私有仓库访问 token')).toHaveValue('');
   await expect(page.getByLabel('仓库用户名', { exact: true })).toHaveValue('');
+  await page.route('**/api/sources/*/settings', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '测试设置保存失败' }),
+    }),
+  );
+  await page.getByRole('checkbox', { name: '打开此工作台时自动同步' }).click();
+  await expect(page.getByRole('alert')).toContainText('测试设置保存失败');
+  await expect(page.getByRole('checkbox', { name: '打开此工作台时自动同步' })).not.toBeChecked();
+  await page.unroute('**/api/sources/*/settings');
+  await page.getByRole('checkbox', { name: '打开此工作台时自动同步' }).check();
+  await expect(
+    page.getByText('已开启：下次打开此工作台时自动同步。', { exact: true }),
+  ).toBeVisible();
+  const automaticRequests: string[] = [];
+  page.on('request', (request) => {
+    if (request.url().endsWith('/sync') && request.postDataJSON()?.automatic)
+      automaticRequests.push(request.url());
+  });
+  await page.reload();
+  await expect(page.getByText('自动同步完成，仓库没有新提交。', { exact: true })).toBeVisible();
+  expect(automaticRequests).toHaveLength(1);
+  await expect(page.getByText('服务器已保存加密凭据', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('私有仓库访问 token')).toHaveValue('');
+  await page.route('**/api/sources/*/sync', (route) =>
+    route.fulfill({
+      status: 502,
+      contentType: 'application/json',
+      body: JSON.stringify({ error: '测试网络错误' }),
+    }),
+  );
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('自动同步未完成');
+  await expect(page.getByText('remote.md', { exact: true })).toBeVisible();
+  expect(automaticRequests).toHaveLength(2);
+  await page.unroute('**/api/sources/*/sync');
   await page.getByLabel('同步 Commit SHA').fill('c'.repeat(40));
   await page.getByRole('button', { name: '同步仓库' }).click();
   await expect(page.locator('.workspace-top code')).toContainText('ccccccc');
@@ -135,4 +175,10 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
     true,
   );
   await expect(page.getByRole('button', { name: '上传文件', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: '删除保存的凭据', exact: true }).click();
+  await expect(page.getByText('未保存仓库凭据', { exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '打开此工作台时自动同步' })).not.toBeChecked();
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'GitLab 来源测试' })).toBeVisible();
+  expect(automaticRequests).toHaveLength(2);
 });

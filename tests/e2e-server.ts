@@ -35,6 +35,7 @@ const app = await createApp({
       process.env.E2E_PRODUCTION === '1' ? `http://127.0.0.1:${apiPort}` : 'http://127.0.0.1:5173',
     GITHUB_CLIENT_ID: 'test',
     GITHUB_CLIENT_SECRET: 'test',
+    CREDENTIAL_ENCRYPTION_KEY: 'a'.repeat(64),
   }),
   github: {
     async exchange() {

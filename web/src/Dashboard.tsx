@@ -22,12 +22,14 @@ export function Dashboard() {
   const [sources, setSources] = useState<Source[]>([]),
     [workspace, setWorkspace] = useState<Workspace | null>(null),
     [selected, setSelected] = useState<Record<string, string>>({});
-  const [busy, setBusy] = useState(''),
+  const [actionBusy, setBusy] = useState(''),
     [error, setError] = useState(''),
     [success, setSuccess] = useState(''),
     [fetching, setFetching] = useState(false),
     [filter, setFilter] = useState(''),
     [prefix, setPrefix] = useState('');
+  const [automaticSyncing, setAutomaticSyncing] = useState(false);
+  const busy = actionBusy || (automaticSyncing ? '自动同步' : '');
   const [repoToken, setRepoToken] = useState('');
   const [repoUsername, setRepoUsername] = useState('');
   const [repoCommit, setRepoCommit] = useState('');
@@ -80,11 +82,46 @@ export function Dashboard() {
     setRepoUsername('');
     setRepoCommit('');
     setSelected({});
+    setAutomaticSyncing(false);
     if (!sourceId || !user) return;
     const controller = new AbortController();
     setFetching(true);
     api<Workspace>(`/api/sources/${sourceId}`, { signal: controller.signal })
-      .then((result) => {
+      .then(async (result) => {
+        if (controller.signal.aborted) return;
+        if (result.source.kind !== 'upload' && result.source.auto_sync) {
+          setAutomaticSyncing(true);
+          try {
+            const synced = await api<{ skipped?: boolean; unchanged?: boolean }>(
+              `/api/sources/${sourceId}/sync`,
+              {
+                method: 'POST',
+                body: { automatic: true },
+                signal: controller.signal,
+              },
+            );
+            result = await api<Workspace>(`/api/sources/${sourceId}`, {
+              signal: controller.signal,
+            });
+            const listing = await api<{ sources: Source[] }>('/api/sources', {
+              signal: controller.signal,
+            });
+            if (controller.signal.aborted) return;
+            setSources(listing.sources);
+            if (!synced.skipped)
+              setSuccess(
+                synced.unchanged
+                  ? '自动同步完成，仓库没有新提交。'
+                  : '已自动同步仓库。重新发布后线上文章才会更新。',
+              );
+          } catch (error) {
+            if (!controller.signal.aborted)
+              setError(`自动同步未完成：${errorMessage(error)}。已保留上次快照，可手动重试。`);
+          } finally {
+            if (!controller.signal.aborted) setAutomaticSyncing(false);
+          }
+        }
+        if (controller.signal.aborted) return;
         setWorkspace(result);
         setRepoCommit(result.source.target_commit || '');
         setSelected(
@@ -415,17 +452,118 @@ export function Dashboard() {
                         type="password"
                         autoComplete="off"
                         aria-label="私有仓库访问 token"
-                        placeholder="Token 或 HTTPS 密码（公开仓库可留空）"
+                        placeholder={
+                          source.has_credentials
+                            ? '留空使用已保存凭据'
+                            : 'Token 或 HTTPS 密码（公开仓库可留空）'
+                        }
                         value={repoToken}
                         disabled={Boolean(busy)}
                         onChange={(event) => setRepoToken(event.target.value)}
                       />
                     </label>
                   </div>
+                  <div className="repository-settings">
+                    <div className="credential-status">
+                      <span>
+                        {source.has_credentials ? '服务器已保存加密凭据' : '未保存仓库凭据'}
+                      </span>
+                      <div className="tool-actions">
+                        <button
+                          disabled={
+                            Boolean(busy) || !repoToken || !workspace.credentialStorageAvailable
+                          }
+                          onClick={() =>
+                            void run(
+                              '保存凭据',
+                              async () => {
+                                await api(`/api/sources/${source.id}/credentials`, {
+                                  method: 'PUT',
+                                  body: { token: repoToken, username: repoUsername || undefined },
+                                });
+                                setRepoToken('');
+                                setRepoUsername('');
+                                setWorkspace(await api<Workspace>(`/api/sources/${source.id}`));
+                                await loadSources();
+                              },
+                              '凭据已加密保存，后续同步无需重复输入。',
+                            )
+                          }
+                        >
+                          {source.has_credentials ? '替换已保存凭据' : '保存凭据'}
+                        </button>
+                        {source.has_credentials && (
+                          <button
+                            className="danger-text"
+                            disabled={Boolean(busy)}
+                            onClick={() =>
+                              void run(
+                                '删除凭据',
+                                async () => {
+                                  await api(`/api/sources/${source.id}/credentials`, {
+                                    method: 'DELETE',
+                                  });
+                                  setRepoToken('');
+                                  setRepoUsername('');
+                                  setWorkspace(await api<Workspace>(`/api/sources/${source.id}`));
+                                  await loadSources();
+                                },
+                                '已删除保存的凭据，并关闭自动同步。',
+                              )
+                            }
+                          >
+                            删除保存的凭据
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    <label className="auto-sync-setting">
+                      <input
+                        type="checkbox"
+                        checked={source.auto_sync}
+                        disabled={Boolean(busy)}
+                        onChange={(event) => {
+                          const enabled = event.target.checked;
+                          setWorkspace({ ...workspace, source: { ...source, auto_sync: enabled } });
+                          void run(
+                            '保存同步设置',
+                            async () => {
+                              try {
+                                await api(`/api/sources/${source.id}/settings`, {
+                                  method: 'PATCH',
+                                  body: { autoSync: enabled },
+                                });
+                              } catch (error) {
+                                setWorkspace((current) =>
+                                  current?.source.id === source.id
+                                    ? {
+                                        ...current,
+                                        source: { ...current.source, auto_sync: source.auto_sync },
+                                      }
+                                    : current,
+                                );
+                                throw error;
+                              }
+                              setWorkspace(await api<Workspace>(`/api/sources/${source.id}`));
+                              await loadSources();
+                            },
+                            enabled ? '已开启：下次打开此工作台时自动同步。' : '已关闭自动同步。',
+                          );
+                        }}
+                      />
+                      打开此工作台时自动同步
+                    </label>
+                    {source.synced_at && (
+                      <small>上次同步：{new Date(source.synced_at).toLocaleString('zh-CN')}</small>
+                    )}
+                  </div>
                   <p>
-                    Commit 留空则同步分支最新版本。用户名与 token
-                    仅用于本次同步，不在服务器保存；勾选发布的内容将公开。
+                    Commit 留空则同步分支最新版本。token 留空时复用已保存凭据，填写新 token
+                    只用于本次同步；点击「保存凭据」才会持久保存。自动同步仅更新草稿，勾选发布的内容将公开。
                   </p>
+                  {!workspace.credentialStorageAvailable && (
+                    <p>管理员尚未配置凭据存储；仍可输入 token 进行单次同步。</p>
+                  )}
                 </div>
               )}
               {source.kind === 'upload' && (

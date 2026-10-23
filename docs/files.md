@@ -21,7 +21,10 @@ Git 仓库来源填写完整 HTTPS 克隆地址（任意公网 Git 服务，如 
 - PUT /api/sources/:id/file：JSON {path, content}，创建/编辑文本
 - DELETE /api/sources/:id/file?path=...：删除文件或目录
 - POST /api/sources/:id/move：JSON {from, to}
-- POST /api/sources/:id/sync：同步仓库分支或指定 Commit
+- PUT /api/sources/:id/credentials：JSON {token, username?}，保存或替换当前仓库凭据
+- DELETE /api/sources/:id/credentials：删除保存的凭据，同时关闭自动同步
+- PATCH /api/sources/:id/settings：JSON {autoSync: boolean}，设置打开工作台时自动同步
+- POST /api/sources/:id/sync：同步仓库分支或指定 Commit；可使用已保存凭据
 
 所有管理 API 要求登录，跨用户请求返回 404，不泄露是否存在。请求体与 CSRF 要求见 authentication.md。
 
@@ -29,7 +32,7 @@ Git 仓库来源填写完整 HTTPS 克隆地址（任意公网 Git 服务，如 
 
 ## 私有仓库 PAT
 
-POST /api/sources/:id/sync 可带 JSON {token: "...", username: "..."}。token 可为平台 PAT 或 HTTPS 密码；用户名按服务要求填写，缺省 GitLab.com 使用 oauth2，其他服务使用 x-access-token。token 不含控制字符，用户名不含冒号或控制字符。认证只保留在当次请求与 Git 子进程内存，不写 URL、命令行参数、磁盘、数据库、日志或 API 响应。通过作用于目标 URL 的 HTTP Basic Authorization 发送；清空系统/全局 Git 配置，不调用凭据助手。GitHub PAT 推荐目标仓库 Contents: read 权限。
+POST /api/sources/:id/sync 可带 JSON {token: "...", username: "..."}。token 可为平台 PAT 或 HTTPS 密码；用户名按服务要求填写，缺省 GitLab.com 使用 oauth2，其他服务使用 x-access-token。token 不含控制字符，用户名不含冒号或控制字符。直接在同步请求中填写的凭据仅用于本次请求，不覆盖已保存凭据。用户另行点击「保存凭据」后，用户名和 token 才会加密存入数据库，后续同步可复用。凭据不写入 Git URL、命令行参数、临时仓库、日志或 API 响应。通过作用于目标 URL 的 HTTP Basic Authorization 发送；清空系统/全局 Git 配置，不调用凭据助手。GitHub PAT 推荐目标仓库 Contents: read 权限。
 
 私有仓库内容仍属于用户私有草稿；用户点击发布的入口和文章引用的图片将公开，目前没有文章权限控制。仓库可见性不自动成为博客文章的访问权限。
 
@@ -50,3 +53,15 @@ multipart 按流累计字节，超出总容量立即停止；协议中单个 par
 大于 4 MiB 的文件存入 file_chunks，单块 4 MiB，files.byte_size 保存原始字节数；小文件及迁移前记录继续使用 files.content，byte_size 为 NULL。这样单个 1 GiB 文件不依赖一个接近 PostgreSQL 字段/协议极限的 bytea。初始化通过可重入 ALTER 添加字段和级联子表，不改写旧文件。读写由 storage.ts 统一处理，目录移动、删除、下载、Git 同步和编译快照均支持分块文件；删除工作区/用户同时清理分块。所有分块写入与配额检查在同一事务内完成。
 
 测试覆盖刚好 1 GiB / 1024 个文件及分别超额、超过旧单文件限制的上传与 Git blob、分块下载和目录移动删除、覆盖计数、超额上传回滚，以及超过旧总大小限制的远程编译。边界配额测试复用 Buffer 来累计真实长度，避免为每次测试分配 1 GiB。
+
+## 凭据保存与打开时同步
+
+凭据按工作区保存于 repository_credentials，删除用户或工作区时级联清理。使用 CREDENTIAL_ENCRYPTION_KEY（32 随机字节的 64 位十六进制表示）进行 AES-256-GCM 加密，每次保存产生独立 12-byte nonce，并将工作区 ID、用户 ID 与仓库地址作为附加认证数据。数据库仅保存带版本、nonce 和认证标签的密文；复制密文到其他用户/仓库、篡改密文或使用错误密钥都会失败。密钥保存在部署环境中，独立于数据库备份。未配置密钥时保存返回 503，单次 PAT 同步及公开仓库同步仍可用。
+
+来源 API 只返回 has_credentials、auto_sync 和 synced_at 等状态，不返回 token、用户名或密文。GET /api/sources/:id 还返回 credentialStorageAvailable。保存/删除/设置接口沿用 owner 校验、CSRF 和来源行锁；保存失败不影响旧凭据。PUT 要求非空 token，可同时替换用户名；删除凭据同时关闭自动同步。token 失效时可替换或删除，Git 错误不回显密钥。
+
+同步请求省略 token 时读取已保存凭据；显式提供 token 仅覆盖本次请求，不修改数据库，显式空字符串表示本次匿名访问。username 可单次覆盖已保存用户名。目标 Commit 的保存规则保持不变。同步失败保留文件、目标、revision、最后成功同步时间和凭据；同一 Commit 与同一目标的重复同步仅更新 synced_at，不改写文件或推进 revision。
+
+自动同步默认关闭，用户可按仓库开启。仅在打开/重新加载/切换到该仓库工作台时发起一次 POST /sync {automatic:true}，使用已保存目标及凭据；服务端再次检查 auto_sync，已关闭时跳过。没有定时器、轮询、后台任务或自动发布。自动同步完成后再展示入口选择，避免覆盖页面内未保存的勾选；后续保存设置、筛选、折叠或手动刷新文件数据不会重复触发。失败仍展示旧快照和可重试提示。公开仓库也可开启自动同步，不要求保存 PAT。
+
+集成测试覆盖加密重启读取、随机 nonce、密钥错误和密文篡改、上下文绑定、API 不泄露凭据、跨用户拒绝、单次覆盖、删除级联、同提交不推进 revision、自动同步不发布及失败回滚。浏览器测试覆盖保存后清空输入、重新打开时自动同步一次、复用保存状态和关闭/删除后的行为。

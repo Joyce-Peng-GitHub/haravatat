@@ -98,6 +98,7 @@ export async function createApp({ db, config, github, repositories, compiler }: 
       createGitRepositories(
         config.GIT_DNS_OVER_HTTPS_URL ? httpsDnsLookup(config.GIT_DNS_OVER_HTTPS_URL) : undefined,
       ),
+    config.CREDENTIAL_ENCRYPTION_KEY,
   );
   postRoutes(app, db, compiler ?? remoteCompiler(config.COMPILER_URL));
   return app;

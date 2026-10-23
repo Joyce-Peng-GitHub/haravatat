@@ -15,6 +15,18 @@ import {
 } from './repository.js';
 import { readUpload, uploadLimits } from './uploads.js';
 import { readFiles, storeFile } from './storage.js';
+import { credentialStore } from './credentials.js';
+const tokenSchema = z
+  .string()
+  .max(1024)
+  .regex(/^[^\x00-\x1f\x7f]*$/);
+const usernameSchema = z
+  .string()
+  .trim()
+  .max(200)
+  .regex(/^[^:\x00-\x1f\x7f]*$/);
+const credentialFlag =
+  'EXISTS (SELECT 1 FROM repository_credentials c WHERE c.source_id=s.id) AS has_credentials';
 export interface Source {
   id: string;
   user_id: string;
@@ -25,6 +37,9 @@ export interface Source {
   revision: number;
   commit_sha: string | null;
   target_commit: string | null;
+  auto_sync: boolean;
+  has_credentials: boolean;
+  synced_at: string | null;
 }
 export const sourceId = (params: unknown) => z.object({ id: z.uuid() }).parse(params).id;
 export async function ownedSource(
@@ -34,7 +49,7 @@ export async function ownedSource(
   lock = false,
 ): Promise<Source> {
   const result = await db.query<Source>(
-    `SELECT * FROM sources WHERE id=$1 AND user_id=$2${lock ? ' FOR UPDATE' : ''}`,
+    `SELECT s.*, ${credentialFlag} FROM sources s WHERE s.id=$1 AND s.user_id=$2${lock ? ' FOR UPDATE OF s' : ''}`,
     [id, userId],
   );
   if (!result.rows[0]) throw new HttpError(404, '未找到工作区');
@@ -53,7 +68,9 @@ export async function sourceRoutes(
   app: FastifyInstance,
   db: Database,
   repositories: RepositoryClient = gitRepositories,
+  encryptionKey?: string,
 ) {
+  const credentials = credentialStore(db, encryptionKey);
   await app.register(multipart, {
     limits: uploadLimits,
   });
@@ -62,7 +79,7 @@ export async function sourceRoutes(
     return {
       sources: (
         await db.query(
-          'SELECT s.*, (SELECT count(*)::int FROM files f WHERE f.source_id=s.id) AS file_count, (SELECT count(*)::int FROM posts p WHERE p.source_id=s.id) AS post_count FROM sources s WHERE user_id=$1 ORDER BY created_at DESC',
+          `SELECT s.*, ${credentialFlag}, (SELECT count(*)::int FROM files f WHERE f.source_id=s.id) AS file_count, (SELECT count(*)::int FROM posts p WHERE p.source_id=s.id) AS post_count FROM sources s WHERE user_id=$1 ORDER BY created_at DESC`,
           [user.id],
         )
       ).rows,
@@ -119,7 +136,7 @@ export async function sourceRoutes(
         [id],
       )
     ).rows;
-    return { source, files, posts };
+    return { source, files, posts, credentialStorageAvailable: credentials.available };
   });
   app.delete('/api/sources/:id', async (request) => {
     const user = await requireUser(db, request),
@@ -207,6 +224,41 @@ export async function sourceRoutes(
     });
     return { ok: true };
   });
+  app.put('/api/sources/:id/credentials', async (request) => {
+    const user = await requireUser(db, request),
+      id = sourceId(request.params);
+    const body = z
+      .object({ token: tokenSchema.min(1), username: usernameSchema.optional() })
+      .parse(request.body);
+    await db.transaction(async (tx) => {
+      const source = await ownedSource(tx, id, user.id, true);
+      if (source.kind === 'upload') throw new HttpError(409, '这个工作区不是 Git 仓库');
+      await credentialStore(tx, encryptionKey).save(source, body);
+    });
+    return { ok: true };
+  });
+  app.delete('/api/sources/:id/credentials', async (request) => {
+    const user = await requireUser(db, request),
+      id = sourceId(request.params);
+    await db.transaction(async (tx) => {
+      const source = await ownedSource(tx, id, user.id, true);
+      if (source.kind === 'upload') throw new HttpError(409, '这个工作区不是 Git 仓库');
+      await credentialStore(tx, encryptionKey).remove(id);
+      await tx.query('UPDATE sources SET auto_sync=false WHERE id=$1', [id]);
+    });
+    return { ok: true };
+  });
+  app.patch('/api/sources/:id/settings', async (request) => {
+    const user = await requireUser(db, request),
+      id = sourceId(request.params);
+    const body = z.object({ autoSync: z.boolean() }).parse(request.body);
+    await db.transaction(async (tx) => {
+      const source = await ownedSource(tx, id, user.id, true);
+      if (source.kind === 'upload') throw new HttpError(409, '这个工作区不是 Git 仓库');
+      await tx.query('UPDATE sources SET auto_sync=$2 WHERE id=$1', [id, body.autoSync]);
+    });
+    return { ok: true };
+  });
   app.post(
     '/api/sources/:id/sync',
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
@@ -215,41 +267,38 @@ export async function sourceRoutes(
         id = sourceId(request.params);
       const source = await ownedSource(db, id, user.id);
       if (source.kind === 'upload') throw new HttpError(409, '这个工作区不是 Git 仓库');
-      const { token, username, commit } = z
+      const { token, username, commit, automatic } = z
         .object({
           commit: z.string().trim().max(64).optional(),
-          username: z
-            .string()
-            .trim()
-            .max(200)
-            .regex(/^[^:\x00-\x1f\x7f]*$/)
-            .optional(),
-          token: z
-            .string()
-            .max(1024)
-            .regex(/^[^\x00-\x1f\x7f]*$/)
-            .optional(),
+          username: usernameSchema.optional(),
+          token: tokenSchema.optional(),
+          automatic: z.boolean().default(false),
         })
         .parse(request.body ?? {});
+      if (automatic && !source.auto_sync) return { ok: true, skipped: true };
+      const saved = token === undefined ? await credentials.read(source) : undefined;
       const targetCommit =
         commit === undefined ? source.target_commit : commit ? repositoryCommit(commit) : null;
       const snapshot = await repositories.snapshot(
         source.repository!,
         source.branch!,
-        token || undefined,
-        username || undefined,
+        token === undefined ? saved?.token : token || undefined,
+        username === undefined ? saved?.username : username || undefined,
         targetCommit || undefined,
       );
+      const unchanged =
+        source.commit_sha === snapshot.commit && source.target_commit === targetCommit;
       await db.transaction(async (tx) => {
         const current = await ownedSource(tx, id, user.id, true);
-        if (current.revision !== source.revision) throw new HttpError(409, '工作区已更新，请重试');
-        await writeFiles(tx, id, snapshot.files);
+        if (current.revision !== source.revision || current.target_commit !== source.target_commit)
+          throw new HttpError(409, '工作区已更新，请重试');
+        if (!unchanged) await writeFiles(tx, id, snapshot.files);
         await tx.query(
           'UPDATE sources SET commit_sha=$2,target_commit=$3,synced_at=now() WHERE id=$1',
           [id, snapshot.commit, targetCommit],
         );
       });
-      return { ok: true, commit: snapshot.commit };
+      return { ok: true, commit: snapshot.commit, unchanged };
     },
   );
 }

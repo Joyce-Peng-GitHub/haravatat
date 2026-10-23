@@ -6,6 +6,13 @@ const envSchema = z.object({
   APP_ORIGIN: z.url().default('http://localhost:5173'),
   GITHUB_CLIENT_ID: z.string().default(''),
   GITHUB_CLIENT_SECRET: z.string().default(''),
+  CREDENTIAL_ENCRYPTION_KEY: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z
+      .string()
+      .regex(/^[a-fA-F0-9]{64}$/)
+      .optional(),
+  ),
   GIT_DNS_OVER_HTTPS_URL: z.preprocess(
     (value) => (value === '' ? undefined : value),
     z.url().optional(),

@@ -30,9 +30,15 @@ CREATE TABLE IF NOT EXISTS sources (
 );
 -- Extend existing installations without replacing their sources or published posts.
 ALTER TABLE sources ADD COLUMN IF NOT EXISTS target_commit text;
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS auto_sync boolean NOT NULL DEFAULT false;
 ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_kind_check;
 ALTER TABLE sources ADD CONSTRAINT sources_kind_check CHECK (kind IN ('upload', 'github', 'git'));
 CREATE INDEX IF NOT EXISTS sources_owner ON sources(user_id);
+CREATE TABLE IF NOT EXISTS repository_credentials (
+  source_id uuid PRIMARY KEY REFERENCES sources(id) ON DELETE CASCADE,
+  encrypted bytea NOT NULL,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
 CREATE TABLE IF NOT EXISTS files (
   source_id uuid NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   path text NOT NULL,

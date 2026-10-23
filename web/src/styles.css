@@ -1307,3 +1307,27 @@ em {
 .directory-row:disabled {
   opacity: 1;
 }
+
+.repository-settings {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  font-size: 11px;
+  color: #65765d;
+}
+.credential-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.repository-token .auto-sync-setting {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.repository-token input[type='checkbox'] {
+  width: auto;
+  flex: none;
+}

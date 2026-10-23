@@ -56,10 +56,14 @@ export interface Source {
   revision: number;
   commit_sha: string | null;
   target_commit: string | null;
+  has_credentials: boolean;
+  auto_sync: boolean;
+  synced_at: string | null;
   file_count?: number;
   post_count?: number;
 }
 export interface Workspace {
+  credentialStorageAvailable: boolean;
   source: Source;
   files: {
     path: string;

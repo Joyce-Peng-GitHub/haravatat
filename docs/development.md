@@ -8,7 +8,7 @@
 - 在 codex/multi-user-typst-blog 分支开发，完成一个可验证的小部分后 commit & push。
 - 提交信息使用英文 Conventional Commits。
 - 默认公开浏览文章；用户仅管理自己名下的来源和文件，未来可添加文章访问控制。
-- HTTPS Git 仓库来源指定分支后手动同步，公开仓库无需 token，私有仓库通过同步请求临时提供 PAT。
+- HTTPS Git 仓库来源支持手动同步或打开工作台时自动同步，公开仓库无需 token，私有仓库可单次提供 PAT 或显式加密保存。
 
 ## 数据与边界
 
@@ -35,3 +35,5 @@ Schema 初始化使用事务和 PostgreSQL advisory lock。后续改变已有表
 - [Typst 项目根隔离](https://typst.app/docs/reference/foundations/path/)
 
 工作区配额集中在 shared/limits.ts（1 GiB / 1024 文件，无独立单文件上限），前后端共用。storage.ts 封装内联/分块 PostgreSQL 文件存储；uploads.ts 供应用上传与内部编译服务复用流式读取和配额校验。Docker 三个构建目标均包含 shared/。容量修改需同时检查数据库传输、编译协议、容器资源和 docs/files.md、docs/deployment.md。
+
+credentials.ts 封装仓库凭据的加密存取，密文与 sources 分表，来源 API 不读取或返回密文。数据库新增 auto_sync 字段及 repository_credentials 表，启动迁移保持可重入；既有工作区默认关闭自动同步。工作台仅在进入仓库时调用已有同步 API，服务端没有定时任务。FileTree.tsx 处理目录结构、筛选和折叠，入口选择与发布仍由 Dashboard 管理。

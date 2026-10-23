@@ -24,7 +24,7 @@ test('PostgreSQL schema enforces ownership and rolls back failed transactions', 
   }
 });
 
-test('existing GitHub workspaces survive the idempotent HTTPS Git schema upgrade', async () => {
+test('existing workspaces and files survive idempotent schema upgrades', async () => {
   const { db, close } = await testDatabase();
   try {
     await db.query("INSERT INTO users VALUES (1,'alice','Alice','')");
@@ -35,6 +35,8 @@ test('existing GitHub workspaces survive the idempotent HTTPS Git schema upgrade
     await db.query(
       "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000001',1,'legacy','github','alice/notes','main')",
     );
+    await db.query('DROP TABLE repository_credentials');
+    await db.query('ALTER TABLE sources DROP COLUMN auto_sync');
     await db.query('DROP TABLE file_chunks');
     await db.query('ALTER TABLE files DROP COLUMN byte_size');
     await db.query('INSERT INTO files (source_id,path,content) VALUES ($1,$2,$3)', [
@@ -51,7 +53,10 @@ test('existing GitHub workspaces survive the idempotent HTTPS Git schema upgrade
     await db.query(
       "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000002',1,'new','git','https://gitlab.com/group/repo.git','main')",
     );
-    assert.equal((await db.query('SELECT * FROM sources')).rows.length, 2);
+    const upgraded = await db.query('SELECT auto_sync FROM sources');
+    assert.equal(upgraded.rows.length, 2);
+    assert.ok(upgraded.rows.every((source) => source.auto_sync === false));
+    assert.equal((await db.query('SELECT * FROM repository_credentials')).rows.length, 0);
   } finally {
     await close();
   }
