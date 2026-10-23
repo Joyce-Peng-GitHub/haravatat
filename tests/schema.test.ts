@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { migrate } from '../server/db.js';
 import { testDatabase } from './database.js';
+import { sourceFiles } from '../server/sources.js';
 
 test('PostgreSQL schema enforces ownership and rolls back failed transactions', async () => {
   const { db, close } = await testDatabase();
@@ -34,8 +35,19 @@ test('existing GitHub workspaces survive the idempotent HTTPS Git schema upgrade
     await db.query(
       "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000001',1,'legacy','github','alice/notes','main')",
     );
+    await db.query('DROP TABLE file_chunks');
+    await db.query('ALTER TABLE files DROP COLUMN byte_size');
+    await db.query('INSERT INTO files (source_id,path,content) VALUES ($1,$2,$3)', [
+      '00000000-0000-4000-8000-000000000001',
+      'legacy.typ',
+      Buffer.from('= Preserved'),
+    ]);
     await migrate(db);
     await migrate(db);
+    assert.equal(
+      (await sourceFiles(db, '00000000-0000-4000-8000-000000000001'))[0].content.toString(),
+      '= Preserved',
+    );
     await db.query(
       "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000002',1,'new','git','https://gitlab.com/group/repo.git','main')",
     );

@@ -23,7 +23,7 @@ export async function createApp({ db, config, github, repositories, compiler }: 
   const app = Fastify({
     logger: config.NODE_ENV !== 'test',
     bodyLimit: 2 * 1024 * 1024,
-    requestTimeout: 120_000,
+    requestTimeout: 300_000,
   });
   await app.register(cookie);
   await app.register(helmet, {

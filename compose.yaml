@@ -35,10 +35,10 @@ services:
       compiler:
         condition: service_healthy
     read_only: true
-    tmpfs: ['/tmp:size=256m,uid=1000,gid=1000']
+    tmpfs: ['/tmp:size=3g,uid=1000,gid=1000']
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
-    mem_limit: 1g
+    mem_limit: 8g
     pids_limit: 128
     networks: [default, database, compilation]
     healthcheck:
@@ -58,12 +58,12 @@ services:
       target: compiler
     restart: unless-stopped
     read_only: true
-    tmpfs: ['/tmp:size=256m,uid=1000,gid=1000']
+    tmpfs: ['/tmp:size=2g,uid=1000,gid=1000']
     volumes:
       - typst_packages:/packages:ro
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
-    mem_limit: 2g
+    mem_limit: 6g
     cpus: 1.0
     pids_limit: 64
     networks: [compilation]

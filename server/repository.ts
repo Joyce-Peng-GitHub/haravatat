@@ -9,7 +9,6 @@ import ipaddr from 'ipaddr.js';
 import { z } from 'zod';
 import { HttpError } from './errors.js';
 import {
-  MAX_FILE_BYTES,
   MAX_SOURCE_BYTES,
   MAX_FILES,
   validateFiles,
@@ -198,7 +197,15 @@ async function git(
     const child = spawn(
       limited ? 'prlimit' : 'git',
       limited
-        ? ['--as=1073741824', '--cpu=45', '--fsize=134217728', '--nofile=128', '--', 'git', ...args]
+        ? [
+            '--as=4294967296',
+            '--cpu=120',
+            '--fsize=2147483648',
+            '--nofile=128',
+            '--',
+            'git',
+            ...args,
+          ]
         : args,
       {
         cwd: directory,
@@ -230,8 +237,8 @@ async function git(
       }
     };
     const timer = setTimeout(
-      () => stop(new HttpError(502, 'Git 操作超时，请缩小仓库后重试')),
-      60_000,
+      () => stop(new HttpError(502, 'Git 操作超时，请检查网络或仓库大小后重试')),
+      300_000,
     );
     child.on('error', () => {
       clearTimeout(timer);
@@ -273,8 +280,8 @@ export async function gitSnapshotFiles(directory: string, commit: string): Promi
       throw new HttpError(400, '仓库不允许符号链接、子模块或特殊文件');
     const size = Number(match[4]);
     total += size;
-    if (size > MAX_FILE_BYTES || total > MAX_SOURCE_BYTES || entries.length >= MAX_FILES)
-      throw new HttpError(413, '仓库超过工作区限制');
+    if (entries.length >= MAX_FILES) throw new HttpError(413, '每个工作区最多 1024 个文件');
+    if (total > MAX_SOURCE_BYTES) throw new HttpError(413, '工作区总大小不能超过 1 GiB');
     entries.push({ path: virtualPath(match[5]), object: match[3], size });
   }
   if (!entries.length) return [];
@@ -293,7 +300,7 @@ export async function gitSnapshotFiles(directory: string, commit: string): Promi
     )
       throw new HttpError(502, '仓库对象读取失败');
     offset = end + entry.size + 2;
-    return { path: entry.path, content: Buffer.from(data.subarray(end + 1, offset - 1)) };
+    return { path: entry.path, content: data.subarray(end + 1, offset - 1) };
   });
   validateFiles(files);
   return files;

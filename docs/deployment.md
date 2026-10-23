@@ -48,7 +48,7 @@ docker run --rm --user 0 -v "$PWD:/work:ro" -v haravatat_typst_packages:/package
 
 - 默认公开博客；私有仓库可使用 PAT 同步，但发布的内容公开。文章权限与 webhook 自动同步未实现。
 - 应用是单节点部署；编译服务同时接受一个任务，繁忙时用户稍后重试。多入口串行编译。
-- 草稿和发布快照存 PostgreSQL bytea；按用户限制 20 个来源、每来源 50 MiB/1000 文件，最多 30 个发布入口，PDF 最多 32 MiB。全站注册人数没有管理配额，公开开放前需按实际服务预算增加运营控制。
+- 草稿和发布快照存 PostgreSQL bytea；按用户限制 20 个来源、每来源 1 GiB/1024 文件，单文件无独立大小限制，最多 30 个发布入口，PDF 最多 32 MiB。全站注册人数没有管理配额，公开开放前需按实际服务预算增加运营控制。
 - Git LFS/submodule 和 Markdown front matter、数学扩展暂不支持。
 - PDF 在手机上按宽度缩放，文字不重排；长文档使用按需 canvas 渲染。
 - 已在 Docker Desktop 实测镜像构建与三服务启动，真实 GitHub OAuth 仍需自己的 OAuth App 凭据。Compose config 已通过无 daemon 的语法与变量校验。仓库同步使用系统 Git HTTPS 协议，运行镜像包含 Git、CA 证书与 prlimit；无需平台 API 额度。
@@ -75,7 +75,7 @@ docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
 - 将入口改为越界 read 后发布返回 422，已发布 PDF 字节保持一致。临时用户及其工作区、会话、文章已级联清理，预览数据库不保留测试内容。
 - 运行镜像的 npm audit --omit=dev 报告 Fastify 5.12.5 的一项 low 告警（GHSA-389g-gv7q-r4x8，header propertyNames 大小写校验）；本次未修改依赖锁，后续依赖升级时处理。
 
-本地直接运行 API 时也需安装 git、CA 证书与 Linux util-linux（prlimit）。仓库 URL 仅允许公网 HTTPS；自建服务需有公开可解析域名及有效 TLS 证书。应用 /tmp 临时盘为 256 MiB，Git 获取的临时 pack 也计入该限额。
+本地直接运行 API 时也需安装 git、CA 证书与 Linux util-linux（prlimit）。仓库 URL 仅允许公网 HTTPS；自建服务需有公开可解析域名及有效 TLS 证书。应用 /tmp 临时盘为 3 GiB，Git 获取的临时 pack 也计入该限额。
 
 当前 Docker Desktop 网络使用 Fake-IP DNS（198.18.0.0/15、fdfe::），直接解析会被公网地址校验拒绝。compose.local.yaml 显式启用 Cloudflare HTTPS DNS JSON 获取真实地址，再通过固定 IP 隧道获取仓库；生产默认仍使用系统 DNS。该选项不放行任何私有或保留地址。参考 [Cloudflare DNS JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。
 
@@ -88,3 +88,18 @@ docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
 - 调整桌面网络后，通过运行中的应用 API 获取 GitLab gitlab-examples/nodejs 的 master（17 文件，892a1f16725e56cc3a2cb0d677be42935c8fc262），再固定到该 SHA。不存在的 SHA 返回 502，原 revision、文件和目标 Commit 保持不变；回环地址同步返回 400。
 - 同一容器通过隔离编译服务生成 9947-byte PDF；app、db、compiler 均为 healthy。API 测试使用临时身份和会话，结束后已级联清理所有测试数据。
 - 未使用真实私有仓库凭据；用户名/token 的传递与不持久化通过 API 测试验证。桌面网络曾出现 DNS/连接错误，调整网络后本轮完整检查通过。遇到此类错误应先检查网络，不能通过放行私有地址解决。
+
+### 工作区容量
+
+每工作区总容量为 1 GiB、最多 1024 文件，含全部未发布的依赖。大文件以 4 MiB PostgreSQL bytea 分块保存，现有数据通过启动迁移兼容读取；数据库备份必须包含 file_chunks 表。内部编译传输改为流式 multipart，请同时重建 app 和 compiler。
+
+Compose 将 app 内存上限设为 8 GiB、tmpfs 3 GiB，compiler 内存上限 6 GiB、tmpfs 2 GiB；tmpfs 使用量计入容器内存。它们是资源上限而非预分配，宿主机需为并发的大工作区处理留足内存。Git 单命令墙钟上限增至 300 秒、地址空间 4 GiB、CPU 120 秒和临时 pack 文件 2 GiB；Typst 输出仍限 32 MiB，运行时间仍限 30 秒。
+
+HTTPS 反向代理须允许至少 1 GiB 加 multipart 头部开销（例如 Nginx client_max_body_size 1100m），并相应配置上传/上游等待时间；应用接收请求上限 300 秒。Git 传输数据/pack 可能大于最终选定 commit 的文件总量，仍受临时盘与进程资源限制。
+
+### 1 GiB 容量实测（2026-10-23）
+
+- 14 项后端测试通过，开发页面和生产静态页面各 2 项浏览器测试通过；构建、类型、格式检查通过。补充旧 schema 迁移测试，重复初始化后原内联文件仍可读取。
+- Docker Desktop 的真实 PostgreSQL / 应用 API 接收单个 1,073,741,824-byte 文件，文件列表大小正确，下载后的 SHA-256 与上传内容一致。
+- 满容量工作区再上传 1 字节返回 413，文件列表与 revision 保持不变；将文件替换为二进制依赖加 Typst 入口、合计恰好 1 GiB 后，成功经独立编译容器发布 9939-byte PDF。
+- 本次实测使用临时用户和会话，结束后已级联清理草稿、分块和文章。已有用户数据保留，app、db、compiler 均为 healthy。

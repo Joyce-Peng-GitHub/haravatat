@@ -6,6 +6,7 @@ RUN npm ci
 FROM dependencies AS build
 COPY tsconfig.json vite.config.ts ./
 COPY server ./server
+COPY shared ./shared
 COPY web ./web
 RUN npm run build
 
@@ -26,6 +27,7 @@ COPY package.json package-lock.json ./
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY server ./server
+COPY shared ./shared
 USER node
 EXPOSE 3000
 CMD ["node", "--import", "tsx", "server/index.ts"]
@@ -38,6 +40,7 @@ COPY --from=typst /bin/typst /usr/local/bin/typst
 COPY package.json package-lock.json ./
 COPY --from=production-dependencies /app/node_modules ./node_modules
 COPY server ./server
+COPY shared ./shared
 ENV COMPILER_HOST=0.0.0.0 TYPST_PACKAGE_CACHE=/packages
 USER node
 EXPOSE 3001

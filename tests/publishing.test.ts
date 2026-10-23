@@ -4,7 +4,8 @@ import { createApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { hash } from '../server/auth.js';
 import { testDatabase } from './database.js';
-import { nativeCompiler } from '../server/compile.js';
+import { nativeCompiler, remoteCompiler } from '../server/compile.js';
+import { createCompilerApp } from '../server/compiler.js';
 import { HttpError } from '../server/errors.js';
 
 test('publication snapshots selected entries and assets, preserves previous posts on failure', async () => {
@@ -98,4 +99,21 @@ test('real Typst compiler builds dependencies and rejects reading outside projec
     ),
     /outside|access|root/i,
   );
+});
+
+test('remote compiler streams a workspace larger than the former total and per-file limits', async () => {
+  const app = await createCompilerApp();
+  const url = await app.listen({ port: 0, host: '127.0.0.1' });
+  try {
+    const pdf = await remoteCompiler(url).compile(
+      [
+        { path: '笔记/main.typ', content: Buffer.from('= Large workspace') },
+        { path: 'large.bin', content: Buffer.alloc(51 * 1024 * 1024, 0xa5) },
+      ],
+      '笔记/main.typ',
+    );
+    assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
+  } finally {
+    await app.close();
+  }
 });

@@ -5,14 +5,7 @@ import { z } from 'zod';
 import type { Database } from './db.js';
 import { requireUser } from './auth.js';
 import { HttpError } from './errors.js';
-import {
-  virtualPath,
-  validateFiles,
-  MAX_FILE_BYTES,
-  MAX_FILES,
-  MAX_SOURCE_BYTES,
-  type SourceFile,
-} from './files.js';
+import { virtualPath, validateFiles, MAX_SOURCE_BYTES, type SourceFile } from './files.js';
 import {
   gitRepositories,
   repositoryUrl,
@@ -20,6 +13,8 @@ import {
   repositoryCommit,
   type RepositoryClient,
 } from './repository.js';
+import { readUpload, uploadLimits } from './uploads.js';
+import { readFiles, storeFile } from './storage.js';
 export interface Source {
   id: string;
   user_id: string;
@@ -46,17 +41,12 @@ export async function ownedSource(
   return result.rows[0];
 }
 export async function sourceFiles(db: Database, id: string) {
-  const { rows } = await db.query<{ path: string; content: Buffer }>(
-    'SELECT path, content FROM files WHERE source_id=$1 ORDER BY path',
-    [id],
-  );
-  return rows.map((file) => ({ path: file.path, content: Buffer.from(file.content) }));
+  return readFiles(db, id);
 }
 async function writeFiles(tx: Database, id: string, files: SourceFile[]) {
   validateFiles(files);
   await tx.query('DELETE FROM files WHERE source_id=$1', [id]);
-  for (const file of files)
-    await tx.query('INSERT INTO files VALUES ($1,$2,$3)', [id, file.path, file.content]);
+  for (const file of files) await storeFile(tx, id, file);
   await tx.query('UPDATE sources SET revision=revision+1 WHERE id=$1', [id]);
 }
 export async function sourceRoutes(
@@ -65,7 +55,7 @@ export async function sourceRoutes(
   repositories: RepositoryClient = gitRepositories,
 ) {
   await app.register(multipart, {
-    limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES, fields: 0, parts: MAX_FILES },
+    limits: uploadLimits,
   });
   app.get('/api/sources', async (request) => {
     const user = await requireUser(db, request);
@@ -119,7 +109,7 @@ export async function sourceRoutes(
     const source = await ownedSource(db, id, user.id);
     const files = (
       await db.query(
-        'SELECT f.path, octet_length(f.content) AS size, p.id AS post_id, p.title, p.source_revision FROM files f LEFT JOIN posts p ON p.source_id=f.source_id AND p.entry_path=f.path WHERE f.source_id=$1 ORDER BY f.path',
+        'SELECT f.path, COALESCE(f.byte_size, octet_length(f.content)) AS size, p.id AS post_id, p.title, p.source_revision FROM files f LEFT JOIN posts p ON p.source_id=f.source_id AND p.entry_path=f.path WHERE f.source_id=$1 ORDER BY f.path',
         [id],
       )
     ).rows;
@@ -143,18 +133,18 @@ export async function sourceRoutes(
       id = sourceId(request.params);
     await ownedSource(db, id, user.id);
     const path = virtualPath(z.object({ path: z.string() }).parse(request.query).path);
-    const { rows } = await db.query<{ content: Buffer }>(
-      'SELECT content FROM files WHERE source_id=$1 AND path=$2',
-      [id, path],
-    );
-    if (!rows[0]) throw new HttpError(404, '未找到文件');
+    const [file] = await db.transaction(async (tx) => {
+      await ownedSource(tx, id, user.id, true);
+      return readFiles(tx, id, path);
+    });
+    if (!file) throw new HttpError(404, '未找到文件');
     return reply
       .type('application/octet-stream')
       .header(
         'Content-Disposition',
         `attachment; filename*=UTF-8''${encodeURIComponent(path.split('/').at(-1)!)}`,
       )
-      .send(Buffer.from(rows[0].content));
+      .send(file.content);
   });
   const changeFiles = async (
     id: string,
@@ -171,17 +161,8 @@ export async function sourceRoutes(
       id = sourceId(request.params);
     const source = await ownedSource(db, id, user.id);
     if (source.kind !== 'upload') throw new HttpError(409, '仓库来源不能上传文件');
-    const additions: SourceFile[] = [];
-    let size = 0;
-    for await (const part of request.files()) {
-      const path = virtualPath(decodeURIComponent(part.filename));
-      const content = await part.toBuffer();
-      size += content.length;
-      if (size > MAX_SOURCE_BYTES) throw new HttpError(413, '上传总大小不能超过 50 MiB');
-      additions.push({ path, content });
-    }
+    const additions = await readUpload(request);
     if (!additions.length) throw new HttpError(400, '请选择上传文件');
-    validateFiles(additions);
     const added = new Set(additions.map((f) => f.path));
     await changeFiles(id, user.id, (files) => [
       ...files.filter((f) => !added.has(f.path)),
@@ -189,7 +170,7 @@ export async function sourceRoutes(
     ]);
     return { ok: true };
   });
-  app.put('/api/sources/:id/file', { bodyLimit: MAX_FILE_BYTES + 1024 }, async (request) => {
+  app.put('/api/sources/:id/file', { bodyLimit: MAX_SOURCE_BYTES * 6 + 4096 }, async (request) => {
     const user = await requireUser(db, request),
       id = sourceId(request.params);
     const body = z.object({ path: z.string(), content: z.string() }).parse(request.body);

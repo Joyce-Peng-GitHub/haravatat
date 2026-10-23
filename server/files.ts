@@ -1,8 +1,7 @@
 import { posix } from 'node:path';
 import { HttpError } from './errors.js';
-export const MAX_FILE_BYTES = 8 * 1024 * 1024;
-export const MAX_SOURCE_BYTES = 50 * 1024 * 1024;
-export const MAX_FILES = 1000;
+import { MAX_SOURCE_BYTES, MAX_FILES } from '../shared/limits.js';
+export { MAX_SOURCE_BYTES, MAX_FILES };
 export interface SourceFile {
   path: string;
   content: Buffer;
@@ -20,17 +19,16 @@ export function virtualPath(path: string): string {
   return path;
 }
 export function validateFiles(files: SourceFile[]) {
-  if (files.length > MAX_FILES) throw new HttpError(413, '每个工作区最多 1000 个文件');
+  if (files.length > MAX_FILES) throw new HttpError(413, '每个工作区最多 1024 个文件');
   let bytes = 0;
   const paths = new Set<string>();
   for (const file of files) {
     virtualPath(file.path);
     if (paths.has(file.path)) throw new HttpError(400, '文件路径重复');
     paths.add(file.path);
-    if (file.content.length > MAX_FILE_BYTES) throw new HttpError(413, '单文件不能超过 8 MiB');
     bytes += file.content.length;
   }
-  if (bytes > MAX_SOURCE_BYTES) throw new HttpError(413, '工作区不能超过 50 MiB');
+  if (bytes > MAX_SOURCE_BYTES) throw new HttpError(413, '工作区总大小不能超过 1 GiB');
   for (const path of paths) {
     let parent = posix.dirname(path);
     while (parent !== '.') {

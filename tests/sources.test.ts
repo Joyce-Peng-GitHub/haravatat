@@ -4,7 +4,7 @@ import { createApp } from '../server/app.js';
 import { loadConfig } from '../server/config.js';
 import { hash } from '../server/auth.js';
 import { testDatabase } from './database.js';
-import { virtualPath, validateFiles } from '../server/files.js';
+import { MAX_FILES, MAX_SOURCE_BYTES, virtualPath, validateFiles } from '../server/files.js';
 
 test('virtual paths reject traversal, duplicates, directory conflicts and quotas', () => {
   for (const path of [
@@ -25,7 +25,29 @@ test('virtual paths reject traversal, duplicates, directory conflicts and quotas
       { path: 'a/b', content: Buffer.from('y') },
     ]),
   );
-  assert.throws(() => validateFiles([{ path: 'a', content: Buffer.alloc(8 * 1024 * 1024 + 1) }]));
+  const block = Buffer.alloc(1024 * 1024);
+  const full = Array.from({ length: MAX_FILES }, (_, index) => ({
+    path: `${index}`,
+    content: block,
+  }));
+  assert.equal(MAX_FILES, 1024);
+  assert.equal(MAX_SOURCE_BYTES, 1024 ** 3);
+  assert.doesNotThrow(() => validateFiles(full));
+  assert.throws(
+    () => validateFiles([...full, { path: 'extra', content: Buffer.alloc(0) }]),
+    /1024/,
+  );
+  assert.throws(
+    () =>
+      validateFiles([
+        ...full.slice(1),
+        { path: 'larger', content: Buffer.alloc(block.length + 1) },
+      ]),
+    /1 GiB/,
+  );
+  assert.doesNotThrow(() =>
+    validateFiles([{ path: 'large', content: Buffer.alloc(9 * 1024 * 1024) }]),
+  );
 });
 
 test('source operations enforce user isolation and sync transactionally', async () => {
@@ -177,6 +199,127 @@ test('source operations enforce user isolation and sync transactionally', async 
     );
     assert.equal((await req('DELETE', base, undefined, 'bob')).statusCode, 404);
     assert.equal((await req('DELETE', base)).statusCode, 200);
+  } finally {
+    await app.close();
+    await close();
+  }
+});
+
+test('large multipart files round-trip through chunk storage and edits preserve quota rollback', async () => {
+  const { db, close } = await testDatabase();
+  await db.query("INSERT INTO users VALUES (1,'alice','Alice','')");
+  await db.query("INSERT INTO sessions VALUES ($1,1,now()+interval '1 day')", [hash('alice')]);
+  const app = await createApp({
+    db,
+    config: loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgres://unused' }),
+  });
+  const req = (
+    method: 'GET' | 'POST' | 'DELETE',
+    url: string,
+    payload?: object | Buffer,
+    contentType?: string,
+  ) =>
+    app.inject({
+      method,
+      url,
+      payload,
+      cookies: { session: 'alice' },
+      headers: {
+        origin: 'http://localhost:5173',
+        'x-haravatat-request': '1',
+        ...(contentType ? { 'content-type': contentType } : {}),
+      },
+    });
+  const multipart = (files: { path: string; content: Buffer }[]) =>
+    Buffer.concat([
+      ...files.flatMap((file) => [
+        Buffer.from(
+          `--test-boundary\r\nContent-Disposition: form-data; name="files"; filename="${encodeURIComponent(file.path)}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+        ),
+        file.content,
+        Buffer.from('\r\n'),
+      ]),
+      Buffer.from('--test-boundary--\r\n'),
+    ]);
+  try {
+    const id = (await req('POST', '/api/sources', { kind: 'upload', name: 'large' })).json().source
+      .id;
+    const base = `/api/sources/${id}`;
+    const content = Buffer.alloc(9 * 1024 * 1024, 0xa5);
+    content[content.length - 1] = 0x7f;
+    const upload = await req(
+      'POST',
+      `${base}/upload`,
+      multipart([{ path: '资料/large.bin', content }]),
+      'multipart/form-data; boundary=test-boundary',
+    );
+    assert.equal(upload.statusCode, 200, upload.body);
+    assert.equal((await req('GET', base)).json().files[0].size, content.length);
+    assert.equal(
+      (await db.query('SELECT * FROM file_chunks WHERE source_id=$1', [id])).rows.length,
+      3,
+    );
+    assert.deepEqual(
+      (await req('GET', `${base}/file?path=${encodeURIComponent('资料/large.bin')}`)).rawPayload,
+      content,
+    );
+    assert.equal(
+      (await req('POST', `${base}/move`, { from: '资料', to: 'moved' })).statusCode,
+      200,
+    );
+    assert.deepEqual((await req('GET', `${base}/file?path=moved/large.bin`)).rawPayload, content);
+    const revision = (await req('GET', base)).json().source.revision;
+    const overflow = await req(
+      'POST',
+      `${base}/upload`,
+      multipart(
+        Array.from({ length: MAX_FILES }, (_, i) => ({ path: `f${i}`, content: Buffer.alloc(0) })),
+      ),
+      'multipart/form-data; boundary=test-boundary',
+    );
+    assert.equal(overflow.statusCode, 413, overflow.body);
+    assert.match(overflow.json().error, /1024/);
+    assert.equal((await req('GET', base)).json().source.revision, revision);
+    const tooMany = await req(
+      'POST',
+      `${base}/upload`,
+      multipart(
+        Array.from({ length: MAX_FILES + 1 }, (_, i) => ({
+          path: `f${i}`,
+          content: Buffer.alloc(0),
+        })),
+      ),
+      'multipart/form-data; boundary=test-boundary',
+    );
+    assert.equal(tooMany.statusCode, 413, tooMany.body);
+    assert.match(tooMany.json().error, /1024/);
+    assert.equal((await req('DELETE', `${base}/file?path=moved`)).statusCode, 200);
+    assert.equal(
+      (await db.query('SELECT * FROM file_chunks WHERE source_id=$1', [id])).rows.length,
+      0,
+    );
+    const exact = await req(
+      'POST',
+      `${base}/upload`,
+      multipart(
+        Array.from({ length: MAX_FILES }, (_, i) => ({ path: `f${i}`, content: Buffer.alloc(0) })),
+      ),
+      'multipart/form-data; boundary=test-boundary',
+    );
+    assert.equal(exact.statusCode, 200, exact.body);
+    assert.equal((await req('GET', base)).json().files.length, 1024);
+    // Replacing an existing path must not count as adding a 1025th file.
+    assert.equal(
+      (
+        await req(
+          'POST',
+          `${base}/upload`,
+          multipart([{ path: 'f0', content: Buffer.from('replacement') }]),
+          'multipart/form-data; boundary=test-boundary',
+        )
+      ).statusCode,
+      200,
+    );
   } finally {
     await app.close();
     await close();

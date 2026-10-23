@@ -1,39 +1,25 @@
 import Fastify from 'fastify';
-import { z } from 'zod';
+import multipart from '@fastify/multipart';
 import { nativeCompiler } from './compile.js';
 import { HttpError } from './errors.js';
-import { MAX_SOURCE_BYTES, MAX_FILES } from './files.js';
+import { virtualPath } from './files.js';
+import { readUpload, uploadLimits } from './uploads.js';
 export async function createCompilerApp() {
   const app = Fastify({
-    bodyLimit: Math.ceil(MAX_SOURCE_BYTES * 1.5) + 1024 * 1024,
     logger: false,
-    requestTimeout: 40_000,
+    requestTimeout: 300_000,
   });
+  await app.register(multipart, { limits: uploadLimits });
   let busy = false;
   app.get('/health', async () => ({ ok: true }));
   app.post('/compile', async (request, reply) => {
     if (busy) return reply.status(503).send('编译服务忙，请稍后重试');
     busy = true;
     try {
-      const body = z
-        .object({
-          entry: z.string(),
-          files: z
-            .array(
-              z.object({
-                path: z.string(),
-                content: z
-                  .string()
-                  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
-              }),
-            )
-            .max(MAX_FILES),
-        })
-        .parse(request.body);
-      const pdf = await nativeCompiler.compile(
-        body.files.map((f) => ({ path: f.path, content: Buffer.from(f.content, 'base64') })),
-        body.entry,
-      );
+      const rawEntry = request.headers['x-typst-entry'];
+      if (typeof rawEntry !== 'string') throw new HttpError(400, '缺少编译入口');
+      const entry = virtualPath(decodeURIComponent(rawEntry));
+      const pdf = await nativeCompiler.compile(await readUpload(request), entry);
       return reply.type('application/pdf').send(pdf);
     } catch (error) {
       return reply

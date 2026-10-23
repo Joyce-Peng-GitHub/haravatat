@@ -82,7 +82,7 @@ test('repository destinations reject private, mapped and mixed DNS answers befor
   assert.equal(target.url, 'https://git.example.com:8443/group/repo.git');
 });
 
-test('native Git object snapshots preserve binary files and fixed commits, rejecting symlinks and oversized blobs', async () => {
+test('native Git object snapshots preserve binary files and fixed commits, accepting large blobs and rejecting symlinks and excess file counts', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'git-test-'));
   const git = (...args: string[]) =>
     execFileSync('git', args, {
@@ -118,7 +118,15 @@ test('native Git object snapshots preserve binary files and fixed commits, rejec
     await assert.rejects(gitSnapshotFiles(directory, commit()), /符号链接/);
     await rm(join(directory, 'link'));
     await writeFile(join(directory, 'large'), Buffer.alloc(8 * 1024 * 1024 + 1));
-    await assert.rejects(gitSnapshotFiles(directory, commit()), /超过/);
+    assert.equal(
+      (await gitSnapshotFiles(directory, commit())).find((file) => file.path === 'large')?.content
+        .length,
+      8 * 1024 * 1024 + 1,
+    );
+    for (let i = 0; i < 1021; i++) await writeFile(join(directory, `file-${i}`), '');
+    assert.equal((await gitSnapshotFiles(directory, commit())).length, 1024);
+    await writeFile(join(directory, 'extra-file'), '');
+    await assert.rejects(gitSnapshotFiles(directory, commit()), /1024/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

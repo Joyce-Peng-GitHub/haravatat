@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
+import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -13,16 +15,32 @@ export interface Compiler {
 export function remoteCompiler(url: string): Compiler {
   return {
     async compile(files, entry) {
-      const response = await fetch(new URL('/compile', url), {
+      validateFiles(files);
+      virtualPath(entry);
+      const boundary = `haravatat-${randomUUID()}`;
+      async function* body() {
+        for (const file of files) {
+          yield Buffer.from(
+            `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${encodeURIComponent(file.path)}"\r\nContent-Type: application/octet-stream\r\n\r\n`,
+          );
+          for (let offset = 0; offset < file.content.length; offset += 64 * 1024)
+            yield file.content.subarray(offset, offset + 64 * 1024);
+          yield Buffer.from('\r\n');
+        }
+        yield Buffer.from(`--${boundary}--\r\n`);
+      }
+      const init: RequestInit & { duplex: 'half' } = {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          entry,
-          files: files.map((f) => ({ path: f.path, content: f.content.toString('base64') })),
-        }),
-        signal: AbortSignal.timeout(45_000),
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'X-Typst-Entry': encodeURIComponent(entry),
+        },
+        body: Readable.toWeb(Readable.from(body())) as ReadableStream<Uint8Array>,
+        duplex: 'half',
+        signal: AbortSignal.timeout(300_000),
         redirect: 'error',
-      }).catch(() => {
+      };
+      const response = await fetch(new URL('/compile', url), init).catch(() => {
         throw new HttpError(502, '编译服务不可用或超时');
       });
       if (!response.ok) {
@@ -73,7 +91,7 @@ export const nativeCompiler: Compiler = {
         await promisify(execFile)(
           'prlimit',
           [
-            '--as=1073741824',
+            '--as=4294967296',
             '--cpu=25',
             `--fsize=${MAX_PDF_BYTES}`,
             '--nofile=128',

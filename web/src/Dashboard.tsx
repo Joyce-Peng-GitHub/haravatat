@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from './App';
 import { api, type Source, type Workspace, errorMessage } from './api';
+import { MAX_SOURCE_BYTES, MAX_FILES } from '../../shared/limits';
 const isEntry = (path: string) => /\.(typ|md|markdown)$/i.test(path);
 const isText = (path: string) =>
   /\.(typ|md|markdown|txt|json|csv|yaml|yml|toml|bib|css)$/i.test(path);
@@ -10,7 +11,9 @@ const size = (bytes: number) =>
     ? `${bytes} B`
     : bytes < 1048576
       ? `${(bytes / 1024).toFixed(1)} KiB`
-      : `${(bytes / 1048576).toFixed(1)} MiB`;
+      : bytes < 1024 ** 3
+        ? `${(bytes / 1048576).toFixed(1)} MiB`
+        : `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 export function Dashboard() {
   const { user, loading, configured } = useAuth();
   const [params, setParams] = useSearchParams(),
@@ -147,11 +150,15 @@ export function Dashboard() {
     void run(
       '上传',
       async () => {
-        if (
-          list.some((file) => file.size > 8 * 1024 * 1024) ||
-          list.reduce((sum, file) => sum + file.size, 0) > 50 * 1024 * 1024
-        )
-          throw new Error('单文件最多 8 MiB，总大小最多 50 MiB。');
+        const nextFiles = new Map(workspace?.files.map((file) => [file.path, file.size]));
+        for (const file of list)
+          nextFiles.set(
+            [base, file.webkitRelativePath || file.name].filter(Boolean).join('/'),
+            file.size,
+          );
+        if (nextFiles.size > MAX_FILES) throw new Error('每个工作区最多 1024 个文件。');
+        if ([...nextFiles.values()].reduce((sum, bytes) => sum + bytes, 0) > MAX_SOURCE_BYTES)
+          throw new Error('工作区总大小最多 1 GiB。');
         const body = new FormData();
         for (const file of list)
           body.append(
@@ -466,7 +473,7 @@ export function Dashboard() {
                       onChange={(event) => upload(event.target.files)}
                     />
                   </div>
-                  <small>单文件 8 MiB · 工作区 50 MiB / 1000 文件 · 空目录不保存</small>
+                  <small>工作区 1 GiB / 1024 文件 · 单文件无独立大小限制 · 空目录不保存</small>
                 </div>
               )}
               <div className="file-tools">

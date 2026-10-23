@@ -33,3 +33,5 @@ Schema 初始化使用事务和 PostgreSQL advisory lock。后续改变已有表
 - [GitHub OAuth](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps)
 - [PDF.js](https://mozilla.github.io/pdf.js/getting_started/)
 - [Typst 项目根隔离](https://typst.app/docs/reference/foundations/path/)
+
+工作区配额集中在 shared/limits.ts（1 GiB / 1024 文件，无独立单文件上限），前后端共用。storage.ts 封装内联/分块 PostgreSQL 文件存储；uploads.ts 供应用上传与内部编译服务复用流式读取和配额校验。Docker 三个构建目标均包含 shared/。容量修改需同时检查数据库传输、编译协议、容器资源和 docs/files.md、docs/deployment.md。

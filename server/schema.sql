@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS files (
   content bytea NOT NULL,
   PRIMARY KEY (source_id, path)
 );
+-- NULL keeps existing inline bytea files readable without rewriting their contents.
+ALTER TABLE files ADD COLUMN IF NOT EXISTS byte_size integer CHECK (byte_size >= 0);
+CREATE TABLE IF NOT EXISTS file_chunks (
+  source_id uuid NOT NULL,
+  path text NOT NULL,
+  ordinal integer NOT NULL CHECK (ordinal >= 0),
+  content bytea NOT NULL,
+  PRIMARY KEY (source_id, path, ordinal),
+  FOREIGN KEY (source_id, path) REFERENCES files(source_id, path) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS posts (
   id uuid PRIMARY KEY,
   source_id uuid NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
