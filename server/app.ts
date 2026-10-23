@@ -11,7 +11,7 @@ import { HttpError } from './errors.js';
 import { sourceRoutes } from './sources.js';
 import { postRoutes } from './posts.js';
 import { remoteCompiler, type Compiler } from './compile.js';
-import type { RepositoryClient } from './repository.js';
+import { createGitRepositories, httpsDnsLookup, type RepositoryClient } from './repository.js';
 export interface AppDependencies {
   db: Database;
   config: Config;
@@ -91,7 +91,14 @@ export async function createApp({ db, config, github, repositories, compiler }: 
     config,
     github ?? githubAuth(config.GITHUB_CLIENT_ID, config.GITHUB_CLIENT_SECRET, config.APP_ORIGIN),
   );
-  await sourceRoutes(app, db, repositories);
+  await sourceRoutes(
+    app,
+    db,
+    repositories ??
+      createGitRepositories(
+        config.GIT_DNS_OVER_HTTPS_URL ? httpsDnsLookup(config.GIT_DNS_OVER_HTTPS_URL) : undefined,
+      ),
+  );
   postRoutes(app, db, compiler ?? remoteCompiler(config.COMPILER_URL));
   return app;
 }

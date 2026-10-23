@@ -6,12 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer, connect } from 'node:net';
 import { once } from 'node:events';
+import { loadConfig } from '../server/config.js';
 import {
   repositoryUrl,
   repositoryBranch,
   repositoryCommit,
   repositoryTarget,
   repositoryProxy,
+  httpsDnsLookup,
   gitSnapshotFiles,
 } from '../server/repository.js';
 
@@ -178,5 +180,53 @@ test('Git CONNECT proxy pins the validated IP and refuses different hosts, ports
   } finally {
     await proxy.close();
     await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
+
+test('optional HTTPS DNS requests both families and still rejects private answers', async () => {
+  assert.equal(
+    loadConfig({ DATABASE_URL: 'postgres://unused', GIT_DNS_OVER_HTTPS_URL: '' })
+      .GIT_DNS_OVER_HTTPS_URL,
+    undefined,
+  );
+  assert.throws(() =>
+    loadConfig({
+      DATABASE_URL: 'postgres://unused',
+      GIT_DNS_OVER_HTTPS_URL: 'http://resolver.example/dns-query',
+    }),
+  );
+  const original = globalThis.fetch;
+  const calls: URL[] = [];
+  let privateAnswer = false;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    calls.push(url);
+    return Response.json({
+      Status: 0,
+      Answer:
+        url.searchParams.get('type') === '1'
+          ? [{ type: 1, data: privateAnswer ? '127.0.0.1' : '93.184.216.34' }]
+          : [],
+    });
+  };
+  try {
+    const resolve = httpsDnsLookup('https://dns.example.com/dns-query');
+    const target = await repositoryTarget('https://git.example.com/private/repo.git', resolve);
+    assert.equal(target.address, '93.184.216.34');
+    assert.deepEqual(
+      calls.map((url) => url.searchParams.get('type')),
+      ['1', '28'],
+    );
+    assert.ok(
+      calls.every(
+        (url) =>
+          url.searchParams.get('name') === 'git.example.com' && !url.href.includes('private'),
+      ),
+    );
+    privateAnswer = true;
+    await assert.rejects(repositoryTarget('https://git.example.com/repo', resolve), /公网/);
+    assert.throws(() => httpsDnsLookup('http://dns.example.com/dns-query'));
+  } finally {
+    globalThis.fetch = original;
   }
 });

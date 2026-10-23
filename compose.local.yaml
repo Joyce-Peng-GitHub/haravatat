@@ -1,6 +1,11 @@
 # Local HTTP preview only; production uses compose.yaml without this override.
 services:
   app:
+    build:
+      args:
+        DEBIAN_MIRROR: https://mirrors.ustc.edu.cn
     environment:
       NODE_ENV: development
       APP_ORIGIN: http://localhost:3000
+      # This desktop network uses Fake-IP DNS. Keep public-address checks enabled.
+      GIT_DNS_OVER_HTTPS_URL: ${GIT_DNS_OVER_HTTPS_URL:-https://cloudflare-dns.com/dns-query}

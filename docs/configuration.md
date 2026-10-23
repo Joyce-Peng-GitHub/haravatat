@@ -16,3 +16,5 @@ APP_ORIGIN 不允许路径、查询串或内嵌凭据，生产环境必须使用
 Docker Compose 另需 POSTGRES_PASSWORD（URL 安全字符），不会使用开发 .env 中 DATABASE_URL；APP_ORIGIN 必须 HTTPS。编译服务支持 COMPILER_HOST / COMPILER_PORT、TYPST_BIN、TYPST_PACKAGE_CACHE，这些仅配置到编译容器或开发编译进程，不能通过用户请求指定。详细见 deployment.md。
 
 Compose 中 GitHub 凭据可留空，以便先验证公开阅读、数据库和编译服务；这时无法登录或管理工作区。获得真实 OAuth App 凭据后填写 .env，再执行相同 Compose 文件的 up -d 以重新创建应用容器。
+
+可选 GIT_DNS_OVER_HTTPS_URL 用于返回 Fake-IP 的网络：设置受信任的 HTTPS DNS JSON 端点（例如 https://cloudflare-dns.com/dns-query），同时查询 A/AAAA，仅接受公网地址。默认使用系统 DNS，无自动回退，不向仓库提供的 DNS 服务发请求。DoH 只传域名，不传仓库路径、用户名或 token；端点由部署管理员配置，拒绝非 HTTPS、内嵌凭据和 URL 片段。Compose 可在 .env 中设置该变量，留空使用系统 DNS；compose.local.yaml 针对当前桌面代理环境启用 Cloudflare。

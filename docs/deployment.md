@@ -63,7 +63,7 @@ CI 使用 PostgreSQL 18 service，通过 TEST_DATABASE_URL 让同一组集成/�
 docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
 ```
 
-打开 http://localhost:3000。compose.local.yaml 仅将应用切换为 development 模式以允许本地 HTTP，使用构建后的静态页面；保留数据库/编译网络隔离和只读容器限制。生产继续单独使用 compose.yaml 和 HTTPS APP_ORIGIN。配置登录时使用回调 http://localhost:3000/auth/github/callback。
+打开 http://localhost:3000。compose.local.yaml 将应用切换为 development 模式以允许本地 HTTP，并为本地网络配置 HTTPS DNS，使用构建后的静态页面；保留数据库/编译网络隔离和只读容器限制。生产继续单独使用 compose.yaml 和 HTTPS APP_ORIGIN。配置登录时使用回调 http://localhost:3000/auth/github/callback。
 
 .env 不提交到 Git。停止服务使用相同 Compose 文件执行 stop；重新启动使用 start。不要使用 down -v，除非确实要删除数据库。
 
@@ -76,3 +76,7 @@ docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
 - 运行镜像的 npm audit --omit=dev 报告 Fastify 5.12.5 的一项 low 告警（GHSA-389g-gv7q-r4x8，header propertyNames 大小写校验）；本次未修改依赖锁，后续依赖升级时处理。
 
 本地直接运行 API 时也需安装 git、CA 证书与 Linux util-linux（prlimit）。仓库 URL 仅允许公网 HTTPS；自建服务需有公开可解析域名及有效 TLS 证书。应用 /tmp 临时盘为 256 MiB，Git 获取的临时 pack 也计入该限额。
+
+当前 Docker Desktop 网络使用 Fake-IP DNS（198.18.0.0/15、fdfe::），直接解析会被公网地址校验拒绝。compose.local.yaml 显式启用 Cloudflare HTTPS DNS JSON 获取真实地址，再通过固定 IP 隧道获取仓库；生产默认仍使用系统 DNS。该选项不放行任何私有或保留地址。参考 [Cloudflare DNS JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。
+
+镜像构建复用同一份 npm ci 依赖，再 prune 开发依赖供应用/编译服务使用。Git 的 Debian 安装包通过 HTTPS 下载（DEBIAN_MIRROR 构建参数默认 Debian 官方源；本地预览针对当前网络使用 USTC 镜像，APT 继续校验 Debian 仓库签名）；系统 CA 包安装前临时使用 Node 自带 Mozilla CA 根验证证书，安装后删除临时 CA 文件。

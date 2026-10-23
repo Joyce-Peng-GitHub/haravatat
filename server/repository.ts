@@ -6,6 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import ipaddr from 'ipaddr.js';
+import { z } from 'zod';
 import { HttpError } from './errors.js';
 import {
   MAX_FILE_BYTES,
@@ -74,6 +75,37 @@ type ResolveHost = (
   host: string,
   options: { all: true; verbatim: true },
 ) => Promise<{ address: string; family: number }[]>;
+export function httpsDnsLookup(endpoint: string): ResolveHost {
+  const resolver = new URL(endpoint);
+  if (resolver.protocol !== 'https:' || resolver.username || resolver.password || resolver.hash)
+    throw new Error('GIT_DNS_OVER_HTTPS_URL requires an HTTPS resolver URL without credentials');
+  return async (host) => {
+    const answers = await Promise.all(
+      ([1, 28] as const).map(async (type) => {
+        const url = new URL(resolver);
+        url.searchParams.set('name', host);
+        url.searchParams.set('type', String(type));
+        const response = await fetch(url, {
+          headers: { accept: 'application/dns-json' },
+          redirect: 'error',
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!response.ok) throw new HttpError(502, 'HTTPS DNS 解析失败');
+        const result = z
+          .object({
+            Status: z.literal(0),
+            Answer: z.array(z.object({ type: z.number(), data: z.string() })).default([]),
+          })
+          .parse(JSON.parse((await boundedBody(response, 65_536)).toString()));
+        return result.Answer.filter((answer) => answer.type === type).map((answer) => ({
+          address: answer.data,
+          family: type === 1 ? 4 : 6,
+        }));
+      }),
+    );
+    return answers.flat();
+  };
+}
 export async function repositoryTarget(repository: string, resolve: ResolveHost = lookup) {
   const url = new URL(repositoryUrl(repository));
   const host = url.hostname.replace(/^\[|\]$/g, '');
@@ -267,74 +299,91 @@ export async function gitSnapshotFiles(directory: string, commit: string): Promi
   return files;
 }
 let syncing = false;
-export const gitRepositories: RepositoryClient = {
-  async snapshot(repository, branch, token, username, commit) {
-    if (syncing) throw new HttpError(503, '仓库同步繁忙，请稍后重试');
-    const reference = commit ? repositoryCommit(commit) : `refs/heads/${repositoryBranch(branch)}`;
-    if ((token && /[\x00-\x1f\x7f]/.test(token)) || (username && /[:\x00-\x1f\x7f]/.test(username)))
-      throw new HttpError(400, '仓库认证信息无效');
-    syncing = true;
-    let directory: string | undefined;
-    let proxy: Awaited<ReturnType<typeof repositoryProxy>> | undefined;
-    try {
-      const target = await repositoryTarget(repository);
-      proxy = await repositoryProxy(target);
-      directory = await mkdtemp(join(tmpdir(), 'haravatat-git-'));
-      await git(directory, [
-        'init',
-        '--bare',
-        '--template=',
-        ...(commit?.length === 64 ? ['--object-format=sha256'] : []),
-      ]);
-      const settings: [string, string][] = [
-        ['http.followRedirects', 'false'],
-        ['http.proxy', proxy.url],
-        ['http.sslVerify', 'true'],
-        ['credential.helper', ''],
-        ['core.hooksPath', '/dev/null'],
-        ['fetch.fsckObjects', 'true'],
-        ['http.lowSpeedLimit', '1024'],
-        ['http.lowSpeedTime', '15'],
-      ];
-      if (token) {
-        const login =
-          username || (new URL(target.url).hostname === 'gitlab.com' ? 'oauth2' : 'x-access-token');
-        settings.push([
-          `http.${target.url}.extraHeader`,
-          `Authorization: Basic ${Buffer.from(`${login}:${token}`).toString('base64')}`,
-        ]);
-      }
-      const env: NodeJS.ProcessEnv = { GIT_CONFIG_COUNT: String(settings.length) };
-      settings.forEach(([key, value], i) => {
-        env[`GIT_CONFIG_KEY_${i}`] = key;
-        env[`GIT_CONFIG_VALUE_${i}`] = value;
-      });
-      await git(
-        directory,
-        ['fetch', '--depth=1', '--no-tags', '--no-recurse-submodules', '--', target.url, reference],
-        { env, max: 1024 * 1024 },
-      );
-      const resolvedCommit = (
-        await git(directory, ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])
+export function createGitRepositories(resolve?: ResolveHost): RepositoryClient {
+  return {
+    async snapshot(repository, branch, token, username, commit) {
+      if (syncing) throw new HttpError(503, '仓库同步繁忙，请稍后重试');
+      const reference = commit
+        ? repositoryCommit(commit)
+        : `refs/heads/${repositoryBranch(branch)}`;
+      if (
+        (token && /[\x00-\x1f\x7f]/.test(token)) ||
+        (username && /[:\x00-\x1f\x7f]/.test(username))
       )
-        .toString()
-        .trim();
-      if (commit && resolvedCommit !== reference)
-        throw new HttpError(502, '远端返回的 Commit 与指定 SHA 不匹配');
-      return { commit: resolvedCommit, files: await gitSnapshotFiles(directory, resolvedCommit) };
-    } finally {
+        throw new HttpError(400, '仓库认证信息无效');
+      syncing = true;
+      let directory: string | undefined;
+      let proxy: Awaited<ReturnType<typeof repositoryProxy>> | undefined;
       try {
-        try {
-          if (proxy) await proxy.close();
-        } finally {
-          if (directory) await rm(directory, { recursive: true, force: true });
+        const target = await repositoryTarget(repository, resolve);
+        proxy = await repositoryProxy(target);
+        directory = await mkdtemp(join(tmpdir(), 'haravatat-git-'));
+        await git(directory, [
+          'init',
+          '--bare',
+          '--template=',
+          ...(commit?.length === 64 ? ['--object-format=sha256'] : []),
+        ]);
+        const settings: [string, string][] = [
+          ['http.followRedirects', 'false'],
+          ['http.proxy', proxy.url],
+          ['http.sslVerify', 'true'],
+          ['credential.helper', ''],
+          ['core.hooksPath', '/dev/null'],
+          ['fetch.fsckObjects', 'true'],
+          ['http.lowSpeedLimit', '1024'],
+          ['http.lowSpeedTime', '15'],
+        ];
+        if (token) {
+          const login =
+            username ||
+            (new URL(target.url).hostname === 'gitlab.com' ? 'oauth2' : 'x-access-token');
+          settings.push([
+            `http.${target.url}.extraHeader`,
+            `Authorization: Basic ${Buffer.from(`${login}:${token}`).toString('base64')}`,
+          ]);
         }
+        const env: NodeJS.ProcessEnv = { GIT_CONFIG_COUNT: String(settings.length) };
+        settings.forEach(([key, value], i) => {
+          env[`GIT_CONFIG_KEY_${i}`] = key;
+          env[`GIT_CONFIG_VALUE_${i}`] = value;
+        });
+        await git(
+          directory,
+          [
+            'fetch',
+            '--depth=1',
+            '--no-tags',
+            '--no-recurse-submodules',
+            '--',
+            target.url,
+            reference,
+          ],
+          { env, max: 1024 * 1024 },
+        );
+        const resolvedCommit = (
+          await git(directory, ['rev-parse', '--verify', 'FETCH_HEAD^{commit}'])
+        )
+          .toString()
+          .trim();
+        if (commit && resolvedCommit !== reference)
+          throw new HttpError(502, '远端返回的 Commit 与指定 SHA 不匹配');
+        return { commit: resolvedCommit, files: await gitSnapshotFiles(directory, resolvedCommit) };
       } finally {
-        syncing = false;
+        try {
+          try {
+            if (proxy) await proxy.close();
+          } finally {
+            if (directory) await rm(directory, { recursive: true, force: true });
+          }
+        } finally {
+          syncing = false;
+        }
       }
-    }
-  },
-};
+    },
+  };
+}
+export const gitRepositories = createGitRepositories();
 export async function boundedBody(response: Response, max: number) {
   if (!response.body) throw new HttpError(502, '下载内容为空');
   const reader = response.body.getReader(),
