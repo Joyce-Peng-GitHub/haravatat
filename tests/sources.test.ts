@@ -269,6 +269,19 @@ test('large multipart files round-trip through chunk storage and edits preserve 
     );
     assert.deepEqual((await req('GET', `${base}/file?path=moved/large.bin`)).rawPayload, content);
     const revision = (await req('GET', base)).json().source.revision;
+    const invalid = await req(
+      'POST',
+      `${base}/upload`,
+      multipart([
+        { path: 'notes/.git/config', content: Buffer.from('metadata') },
+        { path: 'valid.md', content: Buffer.from('# Must not be partially saved') },
+      ]),
+      'multipart/form-data; boundary=test-boundary',
+    );
+    assert.equal(invalid.statusCode, 400, invalid.body);
+    assert.match(invalid.json().error, /\.git/);
+    assert.equal((await req('GET', base)).json().source.revision, revision);
+    assert.equal((await req('GET', base)).json().files.length, 1);
     const overflow = await req(
       'POST',
       `${base}/upload`,

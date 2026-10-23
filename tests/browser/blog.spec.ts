@@ -1,4 +1,68 @@
 import { test, expect } from '@playwright/test';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+test('folder uploads omit Git metadata and finish with nested paths intact', async ({ page }) => {
+  const directory = await mkdtemp(join(tmpdir(), 'haravatat-folder-'));
+  const folder = join(directory, 'notes');
+  await mkdir(join(folder, '.git', 'objects'), { recursive: true });
+  await mkdir(join(folder, '课程'), { recursive: true });
+  await writeFile(join(folder, '.git', 'config'), 'private repository metadata');
+  await writeFile(join(folder, '.git', 'objects', 'pack'), Buffer.alloc(4 * 1024 * 1024));
+  await writeFile(join(folder, '课程', '文章.md'), '# Folder upload');
+  await writeFile(join(folder, 'image.bin'), Buffer.alloc(2 * 1024 * 1024, 0xa5));
+  try {
+    await page.route(/\/auth\/github$/, async (route) => {
+      const response = await route.fetch({ maxRedirects: 0 });
+      const state = new URL(response.headers().location).searchParams.get('state');
+      await route.fulfill({
+        response,
+        headers: {
+          ...response.headers(),
+          location: `${new URL(route.request().url()).origin}/auth/github/callback?code=test&state=${state}`,
+        },
+      });
+    });
+    await page.goto('/dashboard');
+    await page.getByRole('link', { name: '通过 GitHub 登录' }).click();
+    await page.getByRole('button', { name: '新建来源' }).click();
+    await page.getByLabel('来源名称').fill('文件夹回归测试');
+    await page.getByRole('button', { name: '创建来源' }).click();
+    await expect(page.getByRole('heading', { name: '文件夹回归测试' })).toBeVisible();
+    await page.locator('input[webkitdirectory]').setInputFiles(folder);
+    await expect(page.getByText(/文件已上传。勾选入口后发布，线上文章才会更新。/)).toBeVisible({
+      timeout: 10_000,
+    });
+    await expect(page.getByText(/已跳过 2 个 Git 元数据文件/)).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: '发布 notes/课程/文章.md' })).toBeVisible();
+    const workspace = await page.evaluate(async () => {
+      const id = new URL(location.href).searchParams.get('source');
+      return (await fetch(`/api/sources/${id}`)).json();
+    });
+    expect(workspace.files.map((file: { path: string }) => file.path).sort()).toEqual([
+      'notes/image.bin',
+      'notes/课程/文章.md',
+    ]);
+    let requests = 0;
+    page.on('request', (request) => {
+      if (request.url().endsWith('/upload')) requests++;
+    });
+    await page.getByLabel('上传目标目录').fill('../invalid');
+    await page.locator('input[webkitdirectory]').setInputFiles(folder);
+    await expect(page.getByRole('alert')).toContainText('文件路径无效');
+    expect(requests).toBe(0);
+    await page.getByLabel('上传目标目录').clear();
+    await page.route('**/api/sources/*/upload', (route) => route.abort('connectionreset'));
+    await page.locator('input[webkitdirectory]').setInputFiles(folder);
+    await expect(page.getByRole('alert')).toContainText('上传连接中断');
+    await page.unroute('**/api/sources/*/upload');
+    await page.locator('input[webkitdirectory]').setInputFiles(folder);
+    await expect(page.getByText(/文件已上传。勾选入口后发布，线上文章才会更新。/)).toBeVisible();
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test('public Markdown and multi-page PDF reading work on desktop and mobile', async ({ page }) => {
   const errors: string[] = [];

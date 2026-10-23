@@ -49,3 +49,13 @@ tests/markdown.test.ts 运行真实发布转换和 React 阅读插件，覆盖�
 scripts/compose-system-fonts.mjs 只使用 Node 内置模块、可选的 fc-list 和 Docker Compose。系统字体目录及 fc-list 文件先解析 realpath，合并重复/子目录后生成只读 bind mount；不将个人路径提交 Git。--print 可检查生成结果，Docker Compose config --quiet 检查合并配置，真实编译应验证宿主机独有字体出现在 PDF 中，并确认挂载为只读。此路径不修改应用编译协议、用户工作区或已发布文章。
 
 当前 WSL/Docker Desktop 实测发现 10 个目录，包含 Windows 系统字体和 Linux/TeX 字体；排除手动 /fonts 后，Noto Sans SC、Noto Serif SC、Go、Consolas、TeX Gyre Termes 五个家族一起编译成功，PDF 确认嵌入全部五种字体，耗时约 1.2 秒。Docker inspect 确认各目录 RW=false；语法、Compose 合并配置和格式检查均通过。
+
+## 文件夹上传回归
+
+浏览器回归通过真实 webkitdirectory 输入选择磁盘上的 notes/ 目录，包含 .git 元数据、二进制文件和中文嵌套文章，检查上传在 10 秒内完成、保留目录且不保存 .git。不能用普通多文件 File payload 代替目录选择器，这会遗漏浏览器目录选择带来的路径与隐藏文件行为。
+
+同一浏览器用例验证非法目标路径在发送前被拒绝、连接中断显示中文错误，以及再次选择同一文件夹能成功重试。
+
+tests/uploads.test.ts 通过真实 HTTP 慢速流上传非法路径与后续二进制数据，检查读完整个有界请求后才返回 JSON 400；sources 集成测试确认该错误不会部分写入文件或推进 revision。共享路径校验仍由原有 traversal/配额用例覆盖。
+
+实际用户提供的 notes/ 目录在隔离浏览器 fixture 中验证：345 个文件共 122,172,880 字节；自动跳过 260 个 .git 文件（56,833,390 字节），成功保存 85 个内容文件（65,339,490 字节），完整浏览器流程约 13 秒。测试不修改原文件、不上传到现有用户工作区，也不发布文章；本机路径仅用于临时复现脚本，验证后删除。

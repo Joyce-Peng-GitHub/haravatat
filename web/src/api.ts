@@ -29,6 +29,32 @@ export async function api<T>(
   if (!response.ok) throw new ApiError(response.status, result.error ?? '请求失败');
   return result as T;
 }
+
+export function uploadFiles(
+  url: string,
+  body: FormData,
+  onProgress: (loaded: number, total: number) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest();
+    request.open('POST', url);
+    request.timeout = 300_000;
+    request.responseType = 'json';
+    request.setRequestHeader('X-Haravatat-Request', '1');
+    request.upload.onprogress = (event) => {
+      if (event.lengthComputable) onProgress(event.loaded, event.total);
+    };
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) resolve();
+      else reject(new ApiError(request.status, request.response?.error || '上传失败，请重试。'));
+    };
+    request.onerror = () =>
+      reject(new Error('上传连接中断，请检查网络后重试；服务器上的草稿可能尚未更新。'));
+    request.ontimeout = () => reject(new Error('上传超过 5 分钟，请检查连接速度后重试。'));
+    request.onabort = () => reject(new Error('上传已取消。'));
+    request.send(body);
+  });
+}
 export interface User {
   id: string;
   login: string;

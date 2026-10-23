@@ -2,8 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from './App';
 import { FileTree } from './FileTree';
-import { api, type Source, type Workspace, errorMessage } from './api';
+import { api, uploadFiles, type Source, type Workspace, errorMessage } from './api';
 import { MAX_SOURCE_BYTES, MAX_FILES } from '../../shared/limits';
+import { validWorkspacePath } from '../../shared/paths';
 const isEntry = (path: string) => /\.(typ|md|markdown)$/i.test(path);
 const isText = (path: string) =>
   /\.(typ|md|markdown|txt|json|csv|yaml|yml|toml|bib|css)$/i.test(path);
@@ -29,6 +30,9 @@ export function Dashboard() {
     [filter, setFilter] = useState(''),
     [prefix, setPrefix] = useState('');
   const [automaticSyncing, setAutomaticSyncing] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ loaded: number; total: number } | null>(
+    null,
+  );
   const busy = actionBusy || (automaticSyncing ? '自动同步' : '');
   const [repoToken, setRepoToken] = useState('');
   const [repoUsername, setRepoUsername] = useState('');
@@ -183,17 +187,24 @@ export function Dashboard() {
   };
   const upload = (files: FileList | null) => {
     if (!files?.length || !sourceId) return;
-    const list = Array.from(files),
+    const chosen = Array.from(files),
+      list = chosen.filter(
+        (file) => !(file.webkitRelativePath || file.name).split('/').includes('.git'),
+      ),
+      skipped = chosen.length - list.length,
       base = prefix.trim().replace(/\/$/, '');
     void run(
       '上传',
       async () => {
+        setUploadProgress(null);
+        if (!list.length)
+          throw new Error('没有可上传的文件：已跳过 Git 元数据，请选择文章和依赖文件。');
         const nextFiles = new Map(workspace?.files.map((file) => [file.path, file.size]));
-        for (const file of list)
-          nextFiles.set(
-            [base, file.webkitRelativePath || file.name].filter(Boolean).join('/'),
-            file.size,
-          );
+        for (const file of list) {
+          const path = [base, file.webkitRelativePath || file.name].filter(Boolean).join('/');
+          if (!validWorkspacePath(path)) throw new Error(`文件路径无效或超过 500 字符：${path}`);
+          nextFiles.set(path, file.size);
+        }
         if (nextFiles.size > MAX_FILES) throw new Error('每个工作区最多 1024 个文件。');
         if ([...nextFiles.values()].reduce((sum, bytes) => sum + bytes, 0) > MAX_SOURCE_BYTES)
           throw new Error('工作区总大小最多 1 GiB。');
@@ -206,14 +217,21 @@ export function Dashboard() {
               [base, file.webkitRelativePath || file.name].filter(Boolean).join('/'),
             ),
           );
-        await api(`/api/sources/${sourceId}/upload`, { method: 'POST', body });
-        await loadWorkspace(sourceId);
-        await loadSources();
+        try {
+          await uploadFiles(`/api/sources/${sourceId}/upload`, body, (loaded, total) => {
+            setUploadProgress({ loaded, total });
+          });
+          await loadWorkspace(sourceId);
+          await loadSources();
+        } finally {
+          setUploadProgress(null);
+        }
       },
-      '文件已上传。勾选入口后发布，线上文章才会更新。',
-    );
-    if (fileInput.current) fileInput.current.value = '';
-    if (folderInput.current) folderInput.current.value = '';
+      `文件已上传。勾选入口后发布，线上文章才会更新。${skipped ? ` 已跳过 ${skipped} 个 Git 元数据文件。` : ''}`,
+    ).finally(() => {
+      if (fileInput.current) fileInput.current.value = '';
+      if (folderInput.current) folderInput.current.value = '';
+    });
   };
   const publish = () => {
     if (!sourceId) return;
@@ -320,7 +338,17 @@ export function Dashboard() {
       )}
       {busy && (
         <div className="notice" role="status">
-          正在{busy}…{busy === '发布' && ' Typst 编译可能需要一些时间，请保留当前页面。'}
+          {busy === '上传' && uploadProgress ? (
+            uploadProgress.loaded === uploadProgress.total ? (
+              '文件已传输，正在保存到工作区…'
+            ) : (
+              `正在上传… ${Math.floor((uploadProgress.loaded / uploadProgress.total) * 100)}%（${size(uploadProgress.loaded)} / ${size(uploadProgress.total)}）`
+            )
+          ) : (
+            <>
+              正在{busy}…{busy === '发布' && ' Typst 编译可能需要一些时间，请保留当前页面。'}
+            </>
+          )}
         </div>
       )}
       <div className="workspace-layout">
@@ -612,7 +640,9 @@ export function Dashboard() {
                       onChange={(event) => upload(event.target.files)}
                     />
                   </div>
-                  <small>工作区 1 GiB / 1024 文件 · 单文件无独立大小限制 · 空目录不保存</small>
+                  <small>
+                    工作区 1 GiB / 1024 文件 · 单文件无独立大小限制 · 自动跳过 .git · 空目录不保存
+                  </small>
                 </div>
               )}
               <div className="file-tools">

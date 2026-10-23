@@ -1,20 +1,14 @@
 import { posix } from 'node:path';
 import { HttpError } from './errors.js';
 import { MAX_SOURCE_BYTES, MAX_FILES } from '../shared/limits.js';
+import { validWorkspacePath } from '../shared/paths.js';
 export { MAX_SOURCE_BYTES, MAX_FILES };
 export interface SourceFile {
   path: string;
   content: Buffer;
 }
 export function virtualPath(path: string): string {
-  if (
-    !path ||
-    path.length > 500 ||
-    path.startsWith('/') ||
-    /[\\\x00-\x1f\x7f]/.test(path) ||
-    path.split('/').some((p) => !p || p === '.' || p === '..' || p === '.git') ||
-    path.includes(':')
-  )
+  if (!validWorkspacePath(path))
     throw new HttpError(400, '文件路径必须是工作区内的相对路径，不能包含 .. 或 .git');
   return path;
 }

@@ -19,17 +19,25 @@ export const uploadLimits = {
 export async function readUpload(request: FastifyRequest): Promise<SourceFile[]> {
   const files: SourceFile[] = [];
   let bytes = 0;
+  let pathError: HttpError | undefined;
   try {
     for await (const part of request.files({ throwFileSizeLimit: false })) {
-      const path = virtualPath(decodeURIComponent(part.filename));
+      let path = '';
+      try {
+        path = virtualPath(decodeURIComponent(part.filename));
+      } catch (error) {
+        pathError ||= error instanceof HttpError ? error : new HttpError(400, '文件路径编码无效');
+      }
       const chunks: Buffer[] = [];
       for await (const chunk of part.file) {
         bytes += chunk.length;
         if (bytes > MAX_SOURCE_BYTES) throw new HttpError(413, '工作区总大小不能超过 1 GiB');
-        chunks.push(chunk);
+        // Consume bounded input before returning a path error: replying while
+        // the browser still sends a large body can mask the JSON error as a reset.
+        if (!pathError) chunks.push(chunk);
       }
       if (part.file.truncated) throw new HttpError(413, '工作区总大小不能超过 1 GiB');
-      files.push({ path, content: Buffer.concat(chunks) });
+      if (!pathError) files.push({ path, content: Buffer.concat(chunks) });
     }
   } catch (error) {
     if (
@@ -41,6 +49,7 @@ export async function readUpload(request: FastifyRequest): Promise<SourceFile[]>
       throw new HttpError(413, '每个工作区最多 1024 个文件');
     throw error;
   }
+  if (pathError) throw pathError;
   validateFiles(files);
   return files;
 }
