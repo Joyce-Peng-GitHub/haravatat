@@ -69,7 +69,14 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
         buffer: Buffer.from('= Private dependency'),
       },
     ]);
-  await expect(page.getByText('notes/article.md', { exact: true })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '发布 notes/article.md' })).toBeVisible();
+  await page.getByRole('button', { name: '目录 notes', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: '发布 notes/article.md' })).toBeHidden();
+  await page.getByLabel('筛选文件').fill('article.md');
+  await expect(page.getByRole('checkbox', { name: '发布 notes/article.md' })).toBeVisible();
+  await expect(page.getByRole('checkbox', { name: '发布 notes/dependency.typ' })).toBeHidden();
+  await page.getByLabel('筛选文件').clear();
+  await page.getByRole('button', { name: '展开全部', exact: true }).click();
   await page.getByRole('checkbox', { name: '发布 notes/article.md' }).check();
   await page.getByLabel('notes/article.md 的文章标题').fill('浏览器发布');
   await page.getByRole('button', { name: '发布所选文章' }).click();
@@ -86,7 +93,7 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
   expect(await page.evaluate(() => 'xss' in window)).toBe(false);
   await page.getByRole('link', { name: '我的工作台' }).click();
   await page.getByRole('button', { name: /浏览器测试笔记/ }).click();
-  const row = page.locator('.file-row').filter({ hasText: 'notes/article.md' });
+  const row = page.locator('.file-row[data-path="notes/article.md"]');
   await row.getByRole('button', { name: '编辑', exact: true }).click();
   await page.getByLabel('文件内容').fill('# Updated draft\n\n草稿更新后需要重新发布。');
   await page.getByRole('button', { name: '保存草稿' }).click();
@@ -97,7 +104,7 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
   await expect(page.getByText('发布成功，文章已出现在首页。')).toBeVisible();
   await page
     .locator('.file-row')
-    .filter({ hasText: 'notes/dependency.typ' })
+    .filter({ has: page.locator('[title="notes/dependency.typ"]') })
     .getByRole('link', { name: '阅读', exact: true })
     .click();
   await expect(page.locator('.pdf-page .textLayer')).toContainText('Private dependency');

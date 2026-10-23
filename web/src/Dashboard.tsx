@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from './App';
+import { FileTree } from './FileTree';
 import { api, type Source, type Workspace, errorMessage } from './api';
 import { MAX_SOURCE_BYTES, MAX_FILES } from '../../shared/limits';
 const isEntry = (path: string) => /\.(typ|md|markdown)$/i.test(path);
@@ -510,15 +511,21 @@ export function Dashboard() {
                   <div className="empty">
                     <p>
                       {source.kind !== 'upload'
-                        ? '点击「同步分支」获取仓库文件。'
+                        ? '点击「同步仓库」获取仓库文件。'
                         : '还没有文件，上传或新建一篇文章吧。'}
                     </p>
                   </div>
                 ) : (
-                  workspace.files
-                    .filter((file) => file.path.toLowerCase().includes(filter.toLowerCase()))
-                    .map((file) => (
-                      <div className="file-row" key={file.path}>
+                  <FileTree
+                    key={source.id}
+                    files={workspace.files}
+                    filter={filter}
+                    renderFile={(file, depth) => (
+                      <div
+                        className="file-row"
+                        data-path={file.path}
+                        style={{ paddingInlineStart: 17 + Math.min(depth, 6) * 14 }}
+                      >
                         <div className="file-name">
                           {isEntry(file.path) ? (
                             <input
@@ -541,7 +548,9 @@ export function Dashboard() {
                             </span>
                           )}
                           <div>
-                            <span className="file-path">{file.path}</span>
+                            <span className="file-path" title={file.path}>
+                              {file.path.split('/').at(-1)}
+                            </span>
                             {file.post_id && (
                               <span className="file-state">
                                 {file.source_revision === source.revision ? '已发布' : '草稿有更新'}
@@ -617,7 +626,8 @@ export function Dashboard() {
                           )}
                         </div>
                       </div>
-                    ))
+                    )}
+                  />
                 )}
               </div>
               {missing.length > 0 && (

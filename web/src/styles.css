@@ -1270,3 +1270,40 @@ em {
     grid-template-columns: 1fr;
   }
 }
+
+.file-tree {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.tree-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px 17px;
+  color: var(--muted);
+  font-size: 11px;
+  border-top: 1px solid var(--line);
+}
+.directory-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 17px;
+  border: 0;
+  border-top: 1px solid #e9ece2;
+  background: #f0f3eab3;
+  color: var(--green);
+  text-align: start;
+  font-size: 12px;
+}
+.directory-row span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.directory-row:disabled {
+  opacity: 1;
+}
