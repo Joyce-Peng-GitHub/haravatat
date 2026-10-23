@@ -1,0 +1,10 @@
+.git
+node_modules
+dist
+.env
+.env.*
+test-results
+playwright-report
+coverage
+fonts
+.compose.system-fonts.json
