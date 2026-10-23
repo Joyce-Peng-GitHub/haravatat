@@ -16,7 +16,7 @@ Typst 在独立内部编译服务生成 PDF；前端使用 PDF.js canvas + 文�
 
 生产需运行提供的独立编译容器，不向公网暴露 /compile。容器使用无特权用户、只读系统盘、tmpfs、cap_drop、no-new-privileges、内存/CPU/PID 限制和仅内部网络。不能把同一进程方案视为完整 OS 沙箱。
 
-Typst 包缓存通过 TYPST_PACKAGE_CACHE 提供，默认为一次性缓存；生产内部网络禁止自动联网下载，请预先准备包缓存并按部署文档挂载。源文件相对 import、字体和本地图片均可使用。服务器源码不支持通过文件访问应用密钥。
+Typst 包缓存通过 TYPST_PACKAGE_CACHE 提供，默认为一次性缓存；生产内部网络禁止自动联网下载，请预先准备包缓存并按部署文档挂载。缓存缺少精确版本时，错误可能显示 failed to download package / Dns Failed；应通过独立联网辅助容器准备该版本及依赖，原编译服务继续离线、只读。源文件相对 import、字体和本地图片均可使用。服务器源码不支持通过文件访问应用密钥。
 
 测试覆盖 Markdown 图片快照与私有依赖隔离、跨入口链接、PDF 接口、编译失败回滚、并发修改拒绝、稳定文章 UUID、取消发布；真实 Typst CLI 测试包含跨目录 include、多页公式 PDF 和越界 read 拒绝。
 

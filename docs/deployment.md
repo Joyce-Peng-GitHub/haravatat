@@ -34,13 +34,37 @@ docker compose up --build -d
 
 ### Typst 包
 
-预先把所需 @preview 包缓存放入 typst_packages Docker volume，目录结构与 Typst CLI 的 --package-cache-path 一致（preview/name/version）。编译容器以只读形式挂载，离线运行。可用受信任的、联网的临时 Typst 容器编译自己准备的导入样例，指定 --package-cache-path /packages 并挂载该 volume；准备完成后再发布依赖这些包的文章。默认 Compose 项目名 haravatat，对应 volume 名 haravatat_typst_packages。自定义项目名时需使用对应 volume 名。
+预先把所需 @preview 包缓存放入 typst_packages Docker volume，目录结构与 Typst CLI 的 --package-cache-path 一致（preview/name/version）。编译容器以只读形式挂载，离线运行。新建 volume 默认为空，服务 health 为 healthy 不代表文章依赖已缓存。缓存必须包含文章引用的精确版本及其传递依赖。
+
+可使用同版本的编译镜像启动一次联网辅助容器，把已确认的包导入到共享缓存。以下示例不挂载应用源码或 .env，不传入应用凭据；临时容器以 root 写入 root 所有的缓存卷，原编译服务仍以普通用户只读挂载。容器运行结束自动删除，包保留在 volume 中。先完成镜像构建，再执行：
 
 ```bash
-# deps.typ 包含你要预缓存的 import，且文件是受信任的
-# 示例：#import "@preview/ctheorems:2.0.0": *
-docker run --rm --user 0 -v "$PWD:/work:ro" -v haravatat_typst_packages:/packages ghcr.io/typst/typst:0.15.1 compile --root /work --package-cache-path /packages /work/deps.typ /tmp/deps.pdf
+docker run --rm -i --user 0 --read-only --tmpfs /tmp:size=128m \
+  --cap-drop ALL --security-opt no-new-privileges:true \
+  --mount type=volume,source=haravatat_typst_packages,target=/packages \
+  --entrypoint node haravatat-compiler --input-type=module <<'EOF'
+import { writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+writeFileSync('/tmp/deps.typ', [
+  '#import "@preview/ctheorems:1.1.3": *',
+  '#import "@preview/algo:0.3.6"',
+  '#import "@preview/numbly:0.1.0"',
+  '= Package cache check',
+].join('\n'));
+execFileSync('typst', [
+  'compile', '--root', '/tmp',
+  '--package-path', '/tmp/local-packages',
+  '--package-cache-path', '/packages',
+  '/tmp/deps.typ', '/tmp/check.pdf',
+], { stdio: 'inherit', timeout: 60000 });
+EOF
 ```
+
+按实际依赖调整 import 列表。默认 Compose 项目名 haravatat，对应 volume 名 haravatat_typst_packages、镜像 haravatat-compiler；自定义项目名或镜像时使用相应名称。只预缓存明确需要的包。新包或不同版本需要重新准备缓存；无需改变编译服务网络、重建编译镜像或重新同步 Git 仓库。
+
+若报 `failed to download package ... Dns Failed`，先检查目标版本的 `/packages/preview/<name>/<version>/typst.toml` 是否存在、是否可读。缓存缺包时，离线编译器尝试下载便会出现该错误；这不等于仓库同步或 PAT 失效。若联网辅助容器也下载失败，再检查宿主机网络。若辅助容器提示 `failed to create temporary package directory: Permission denied`，确认使用上述临时 root 用户及可写 volume；不要把原编译服务的只读挂载改为可写。
+
+已用实际离线编译服务复现 ctheorems:1.1.3 缺包下载失败；在联网临时容器缓存 ctheorems:1.1.3、algo:0.3.6 和 numbly:0.1.0 后，同一最小文档生成 6731-byte PDF，三个包一起导入生成 6887-byte PDF。验证只编译临时文档，未替用户发布或更改文章。
 
 数据库 volume 位于 PostgreSQL 18 推荐的 /var/lib/postgresql；升级大版本前使用 pg_dump/pg_restore 或 pg_upgrade，不能直接替换旧 volume 数据。备份数据库即可包含虚拟文件与已发布 PDF/图片；编译包缓存可再生成。
 
