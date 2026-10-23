@@ -21,4 +21,6 @@ npm run dev
 
 生产使用 `docker compose up --build -d`，需要 HTTPS 反向代理和 GitHub OAuth App。
 
+自动使用服务器系统字体：本地预览运行 `node scripts/compose-system-fonts.mjs up --build -d --wait`；生产加 `--production`。脚本自动发现并只读挂载字体目录，无需逐个复制字体，后续启动也使用该命令。详情见部署文档。
+
 文档：[部署](docs/deployment.md) · [配置](docs/configuration.md) · [登录](docs/authentication.md) · [文件管理](docs/files.md) · [发布](docs/publishing.md) · [界面](docs/interface.md) · [开发进度](docs/development.md)。示例文件位于 examples/。

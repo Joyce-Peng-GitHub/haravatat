@@ -9,3 +9,4 @@ test-results/
 *.log
 fonts/*
 !fonts/.gitkeep
+.compose.system-fonts.json

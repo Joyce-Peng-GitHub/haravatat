@@ -34,7 +34,22 @@ docker compose up --build -d
 
 ### Typst 字体
 
-Docker 不会继承 Windows/WSL/宿主机的字体。镜像自带的中文家族名是 Noto Sans CJK SC / Noto Serif CJK SC，不能替代文档指定的 Noto Sans SC / Noto Serif SC。将有权在服务器使用的 .ttf/.otf/.ttc 文件复制到项目 fonts/（已忽略 Git），Compose 只读挂载该目录，TYPST_FONT_PATHS=/fonts；不需要重建镜像。首次增加挂载需重新创建编译容器：
+Docker 不会默认继承宿主机字体。推荐使用自动发现脚本启动：
+
+```bash
+# 当前本地 HTTP 预览，使用 compose.yaml + compose.local.yaml
+node scripts/compose-system-fonts.mjs up -d --wait
+# 生产部署，使用 compose.yaml；依然需要生产 HTTPS/OAuth/数据库配置
+node scripts/compose-system-fonts.mjs --production up -d --wait
+# 只生成/检查字体挂载，不启动容器
+node scripts/compose-system-fonts.mjs --print
+```
+
+脚本查找当前操作系统的系统/用户字体目录，并通过 fc-list 找到已注册字体的真实目录，解析文件符号链接。支持 Linux、Windows、macOS 标准目录；WSL 另检查 /mnt/c/Windows/Fonts，避免 Windows 字体链接进入容器后失效。只把存在的字体目录只读挂载到 /host-fonts/，不复制字体、不挂载整个用户目录。生成的 .compose.system-fonts.json 包含本机路径，已忽略 Git 和镜像构建；每次运行脚本重新发现目录，Docker Compose 的其余参数原样传递，默认参数为 up -d --wait。Docker daemon 需能访问这些本机路径（Docker Desktop 需要相应目录共享）；远程 daemon 应在其宿主机运行脚本。
+
+后续启动/更新也使用该脚本，以保留自动字体挂载；直接运行不含生成文件的 docker compose up 会移除这些挂载。在已有挂载目录内安装/更新字体后，下一次编译自动扫描，无需重建镜像或重启；新增其他目录时重新运行脚本。脚本未发现字体目录或遇到访问错误时明确失败，不会静默使用错误路径。fc-list 缺省时仍扫描标准目录。
+
+镜像自带的中文家族名是 Noto Sans CJK SC / Noto Serif CJK SC，不能替代文档指定的 Noto Sans SC / Noto Serif SC。也可将 .ttf/.otf/.ttc 文件复制到项目 fonts/（已忽略 Git），基础 Compose 只读挂载该目录；此方式不依赖宿主机字体发现，也不需要重建镜像：
 
 ```bash
 mkdir -p fonts
@@ -45,7 +60,7 @@ docker compose up -d compiler
 docker compose exec compiler typst fonts --font-path /fonts
 ```
 
-应在列表中看到 Noto Sans SC、Noto Serif SC。Typst 使用字体内部家族名，不使用文件名或 VF 后缀。每次编译重新扫描字体目录，添加字体后重新发布即可；也可把字体放入用户工作区，随来源快照扫描。不要把整个宿主机或用户目录挂载给编译器。备份时同时保存 fonts/，数据库备份不包含这些管理员字体。
+手动复制后应在列表中看到 Noto Sans SC、Noto Serif SC。自动挂载时可使用 node scripts/compose-system-fonts.mjs exec -T compiler sh -c 'typst fonts --font-path "$TYPST_FONT_PATHS"' 查看全部字体。Typst 使用字体内部家族名，不使用文件名或 VF 后缀。添加字体后重新发布即可更新已保存的 PDF；也可把字体放入用户工作区，随来源快照扫描。备份时同时保存所依赖的字体，数据库备份不包含管理员/宿主机字体。
 
 Typst CLI 对缺失家族只返回 warning 和成功退出码；服务器现在将 unknown font family 诊断升级为发布失败，保留上次发布版本并显示缺失名称。此策略不会把其他警告或正常的字形回退都视为错误。
 
@@ -90,7 +105,7 @@ EOF
 - 默认公开博客；私有仓库可使用 PAT 同步，但发布的内容公开。文章权限与 webhook 自动同步未实现。
 - 应用是单节点部署；编译服务同时接受一个任务，繁忙时用户稍后重试。多入口串行编译。
 - 草稿和发布快照存 PostgreSQL bytea；按用户限制 20 个来源、每来源 1 GiB/1024 文件，单文件无独立大小限制，最多 30 个发布入口，PDF 最多 32 MiB。全站注册人数没有管理配额，公开开放前需按实际服务预算增加运营控制。
-- Git LFS/submodule 和 Markdown front matter、数学扩展暂不支持。
+- Git LFS/submodule 和 Markdown front matter 暂不支持。数学语法见 markdown.md。
 - PDF 在手机上按宽度缩放，文字不重排；长文档使用按需 canvas 渲染。
 - 已在 Docker Desktop 实测镜像构建与三服务启动，真实 GitHub OAuth 仍需自己的 OAuth App 凭据。Compose config 已通过无 daemon 的语法与变量校验。仓库同步使用系统 Git HTTPS 协议，运行镜像包含 Git、CA 证书与 prlimit；无需平台 API 额度。
 
@@ -101,10 +116,10 @@ CI 使用 PostgreSQL 18 service，通过 TEST_DATABASE_URL 让同一组集成/�
 未配置 GitHub OAuth 时也可启动服务，登录端点明确返回未配置状态。创建仅本机使用的 .env，设置随机 POSTGRES_PASSWORD；GitHub 凭据可以留空，然后运行：
 
 ```bash
-docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
+node scripts/compose-system-fonts.mjs up --build -d --wait
 ```
 
-打开 http://localhost:3000。compose.local.yaml 将应用切换为 development 模式以允许本地 HTTP，并为本地网络配置 HTTPS DNS，使用构建后的静态页面；保留数据库/编译网络隔离和只读容器限制。生产继续单独使用 compose.yaml 和 HTTPS APP_ORIGIN。配置登录时使用回调 http://localhost:3000/auth/github/callback。
+打开 http://localhost:3000。脚本将 compose.yaml、compose.local.yaml 和本机字体挂载配置合并。compose.local.yaml 将应用切换为 development 模式以允许本地 HTTP，并为本地网络配置 HTTPS DNS，使用构建后的静态页面；保留数据库/编译网络隔离和只读容器限制。生产使用脚本的 --production 参数与 HTTPS APP_ORIGIN。若不需要宿主机字体，也可直接使用原来的两个 Compose 文件。配置登录时使用回调 http://localhost:3000/auth/github/callback。
 
 .env 不提交到 Git。停止服务使用相同 Compose 文件执行 stop；重新启动使用 start。不要使用 down -v，除非确实要删除数据库。
 

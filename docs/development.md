@@ -43,3 +43,9 @@ credentials.ts 封装仓库凭据的加密存取，密文与 sources 分表，�
 发布与阅读共享 shared/markdown.ts 的括号数学 tokenizer，并启用 remark-math。新增语法必须验证「原始 Markdown → 发布快照 → React 阅读」全链路，不能仅测试未发布的原文。web/src/markdown-config.ts 提供实际阅读插件配置；高亮和 alert 只作用于展示 AST。依赖使用 KaTeX 0.19.0，并通过 npm override 让 rehype-katex 的排版引擎与导入的 CSS/字体使用同一版本，避免嵌套旧版本引擎造成样式不匹配。
 
 tests/markdown.test.ts 运行真实发布转换和 React 阅读插件，覆盖各类公式定界符、嵌套引用内的多行公式、代码原文、公式资源隔离、嵌套格式高亮、五类 alert、GFM 及不可信公式/HTML。浏览器测试还经过上传和发布接口，检查公式 DOM、字体加载及手机页面宽度。
+
+## 系统字体挂载
+
+scripts/compose-system-fonts.mjs 只使用 Node 内置模块、可选的 fc-list 和 Docker Compose。系统字体目录及 fc-list 文件先解析 realpath，合并重复/子目录后生成只读 bind mount；不将个人路径提交 Git。--print 可检查生成结果，Docker Compose config --quiet 检查合并配置，真实编译应验证宿主机独有字体出现在 PDF 中，并确认挂载为只读。此路径不修改应用编译协议、用户工作区或已发布文章。
+
+当前 WSL/Docker Desktop 实测发现 10 个目录，包含 Windows 系统字体和 Linux/TeX 字体；排除手动 /fonts 后，Noto Sans SC、Noto Serif SC、Go、Consolas、TeX Gyre Termes 五个家族一起编译成功，PDF 确认嵌入全部五种字体，耗时约 1.2 秒。Docker inspect 确认各目录 RW=false；语法、Compose 合并配置和格式检查均通过。
