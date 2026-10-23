@@ -13,16 +13,23 @@ import {
   MAX_SOURCE_BYTES,
   type SourceFile,
 } from './files.js';
-import { githubRepositories, repositoryName, type RepositoryClient } from './repository.js';
+import {
+  gitRepositories,
+  repositoryUrl,
+  repositoryBranch,
+  repositoryCommit,
+  type RepositoryClient,
+} from './repository.js';
 export interface Source {
   id: string;
   user_id: string;
   name: string;
-  kind: 'upload' | 'github';
+  kind: 'upload' | 'github' | 'git';
   repository: string | null;
   branch: string | null;
   revision: number;
   commit_sha: string | null;
+  target_commit: string | null;
 }
 export const sourceId = (params: unknown) => z.object({ id: z.uuid() }).parse(params).id;
 export async function ownedSource(
@@ -55,7 +62,7 @@ async function writeFiles(tx: Database, id: string, files: SourceFile[]) {
 export async function sourceRoutes(
   app: FastifyInstance,
   db: Database,
-  repositories: RepositoryClient = githubRepositories,
+  repositories: RepositoryClient = gitRepositories,
 ) {
   await app.register(multipart, {
     limits: { fileSize: MAX_FILE_BYTES, files: MAX_FILES, fields: 0, parts: MAX_FILES },
@@ -77,10 +84,11 @@ export async function sourceRoutes(
       .discriminatedUnion('kind', [
         z.object({ kind: z.literal('upload'), name: z.string().trim().min(1).max(120) }),
         z.object({
-          kind: z.literal('github'),
+          kind: z.enum(['github', 'git']),
           name: z.string().trim().min(1).max(120),
-          repository: z.string().max(300),
-          branch: z.string().trim().min(1).max(200),
+          repository: z.string().max(2048),
+          branch: z.string().trim().min(1).max(200).default('main'),
+          commit: z.string().trim().max(64).optional(),
         }),
       ])
       .parse(request.body);
@@ -90,14 +98,15 @@ export async function sourceRoutes(
       if ((await tx.query('SELECT id FROM sources WHERE user_id=$1', [user.id])).rows.length >= 20)
         throw new HttpError(413, '每个用户最多 20 个工作区');
       await tx.query(
-        'INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ($1,$2,$3,$4,$5,$6)',
+        'INSERT INTO sources (id,user_id,name,kind,repository,branch,target_commit) VALUES ($1,$2,$3,$4,$5,$6,$7)',
         [
           id,
           user.id,
           body.name,
           body.kind,
-          body.kind === 'github' ? repositoryName(body.repository) : null,
-          body.kind === 'github' ? body.branch : null,
+          body.kind !== 'upload' ? repositoryUrl(body.repository) : null,
+          body.kind !== 'upload' ? repositoryBranch(body.branch) : null,
+          body.kind !== 'upload' && body.commit ? repositoryCommit(body.commit) : null,
         ],
       );
     });
@@ -154,7 +163,7 @@ export async function sourceRoutes(
   ) =>
     db.transaction(async (tx) => {
       const source = await ownedSource(tx, id, userId, true);
-      if (source.kind !== 'upload') throw new HttpError(409, '仓库来源请在 GitHub 修改后同步');
+      if (source.kind !== 'upload') throw new HttpError(409, '仓库来源请在远端修改后同步');
       await writeFiles(tx, id, mutate(await sourceFiles(tx, id)));
     });
   app.post('/api/sources/:id/upload', async (request) => {
@@ -224,30 +233,40 @@ export async function sourceRoutes(
       const user = await requireUser(db, request),
         id = sourceId(request.params);
       const source = await ownedSource(db, id, user.id);
-      if (source.kind !== 'github') throw new HttpError(409, '这个工作区不来自 GitHub');
-      const { token } = z
+      if (source.kind === 'upload') throw new HttpError(409, '这个工作区不是 Git 仓库');
+      const { token, username, commit } = z
         .object({
-          token: z
+          commit: z.string().trim().max(64).optional(),
+          username: z
             .string()
             .trim()
-            .max(500)
-            .regex(/^[A-Za-z0-9_]*$/)
+            .max(200)
+            .regex(/^[^:\x00-\x1f\x7f]*$/)
+            .optional(),
+          token: z
+            .string()
+            .max(1024)
+            .regex(/^[^\x00-\x1f\x7f]*$/)
             .optional(),
         })
         .parse(request.body ?? {});
+      const targetCommit =
+        commit === undefined ? source.target_commit : commit ? repositoryCommit(commit) : null;
       const snapshot = await repositories.snapshot(
         source.repository!,
         source.branch!,
         token || undefined,
+        username || undefined,
+        targetCommit || undefined,
       );
       await db.transaction(async (tx) => {
         const current = await ownedSource(tx, id, user.id, true);
         if (current.revision !== source.revision) throw new HttpError(409, '工作区已更新，请重试');
         await writeFiles(tx, id, snapshot.files);
-        await tx.query('UPDATE sources SET commit_sha=$2,synced_at=now() WHERE id=$1', [
-          id,
-          snapshot.commit,
-        ]);
+        await tx.query(
+          'UPDATE sources SET commit_sha=$2,target_commit=$3,synced_at=now() WHERE id=$1',
+          [id, snapshot.commit, targetCommit],
+        );
       });
       return { ok: true, commit: snapshot.commit };
     },

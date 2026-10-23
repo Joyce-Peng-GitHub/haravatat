@@ -19,14 +19,19 @@ CREATE TABLE IF NOT EXISTS sources (
   id uuid PRIMARY KEY,
   user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   name text NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
-  kind text NOT NULL CHECK (kind IN ('upload', 'github')),
+  kind text NOT NULL CHECK (kind IN ('upload', 'github', 'git')),
   repository text,
   branch text,
   revision integer NOT NULL DEFAULT 0,
   commit_sha text,
+  target_commit text,
   synced_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- Extend existing installations without replacing their sources or published posts.
+ALTER TABLE sources ADD COLUMN IF NOT EXISTS target_commit text;
+ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_kind_check;
+ALTER TABLE sources ADD CONSTRAINT sources_kind_check CHECK (kind IN ('upload', 'github', 'git'));
 CREATE INDEX IF NOT EXISTS sources_owner ON sources(user_id);
 CREATE TABLE IF NOT EXISTS files (
   source_id uuid NOT NULL REFERENCES sources(id) ON DELETE CASCADE,

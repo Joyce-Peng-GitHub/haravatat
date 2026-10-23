@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { migrate } from '../server/db.js';
 import { testDatabase } from './database.js';
 
 test('PostgreSQL schema enforces ownership and rolls back failed transactions', async () => {
@@ -17,6 +18,28 @@ test('PostgreSQL schema enforces ownership and rolls back failed transactions', 
       }),
     );
     assert.equal((await db.query('SELECT * FROM sources')).rows.length, 0);
+  } finally {
+    await close();
+  }
+});
+
+test('existing GitHub workspaces survive the idempotent HTTPS Git schema upgrade', async () => {
+  const { db, close } = await testDatabase();
+  try {
+    await db.query("INSERT INTO users VALUES (1,'alice','Alice','')");
+    await db.query('ALTER TABLE sources DROP CONSTRAINT sources_kind_check');
+    await db.query(
+      "ALTER TABLE sources ADD CONSTRAINT sources_kind_check CHECK (kind IN ('upload','github'))",
+    );
+    await db.query(
+      "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000001',1,'legacy','github','alice/notes','main')",
+    );
+    await migrate(db);
+    await migrate(db);
+    await db.query(
+      "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000002',1,'new','git','https://gitlab.com/group/repo.git','main')",
+    );
+    assert.equal((await db.query('SELECT * FROM sources')).rows.length, 2);
   } finally {
     await close();
   }

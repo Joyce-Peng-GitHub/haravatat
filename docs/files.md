@@ -4,14 +4,16 @@
 
 目录由文件路径隐式建立，支持保留目录上传，暂不保存空目录。上传覆盖同名草稿；删除目录会删除其下全部草稿；重命名/移动不允许覆盖已有路径。所有修改在来源行锁和事务中完成，失败全部回滚。草稿修改不会自动改变已发布快照。
 
-GitHub 来源填写 owner/repository（也可提供 https://github.com/owner/repository）和精确分支名。创建后需手动同步。支持公开仓库和 PAT 授权的私有仓库。下载前通过 GitHub API 将分支解析到 commit SHA，再下载固定 SHA 的 ZIP，以保持一次同步内部一致。仅访问 GitHub 固定主机，无任意 URL 抓取。拒绝符号链接、特殊文件、超大 ZIP/解压文件。失败保留旧快照；并发同步检测 revision 冲突。仓库来源只读，修改需回 GitHub 后再次同步。不下载 Git LFS 实体、不递归拉取 submodule。
+Git 仓库来源填写完整 HTTPS 克隆地址（任意公网 Git 服务，如 GitHub、GitLab、Codeberg、自建服务，可含端口和多级路径）和精确分支名。兼容 GitHub 的 owner/repository 简写及已有 kind=github 工作区；新来源使用 kind=git。创建后手动同步。支持公开仓库及 token/密码授权的私有仓库，不依赖托管平台 API。
 
-公开仓库下载无需 repo OAuth 权限；API 使用未认证额度（可能共享服务器 IP），额度耗尽会明确报错，未来可增加 GitHub App 授权。私有仓库可在同步时输入 PAT。
+同步通过系统 Git 获取指定 refs/heads/<branch> 或完整 Commit SHA 的浅快照并记录 commit。直接读取该 commit 的 tree/blob，不检出工作目录、不执行 hooks/过滤器。拒绝符号链接、子模块、特殊文件；最多 1000 文件、单文件 8 MiB、总计 50 MiB。失败保留旧快照；并发同步检测 revision 冲突。仓库来源只读，修改需回远端后再次同步。不下载 Git LFS 实体。不支持 SSH、HTTP、内嵌凭据、查询参数、URL 片段或需要跳转的地址，请使用服务提供的最终 HTTPS 克隆地址。
+
+地址经 DNS 解析后必须全部为公网单播 IP。每次同步启动临时 CONNECT 代理，仅允许连接所填主机和端口，固定已校验 IP，覆盖 Git 所有网络请求（包括对象 alternates）；禁用重定向，保持端到端 TLS 证书验证。拒绝本机、私有网段、链路本地、保留地址及 IPv4 映射绕过。每进程同时处理一个同步，忙时返回 503；单条 Git 命令超时 60 秒。Linux 使用 prlimit 限制地址空间 1 GiB、CPU 45 秒、单文件输出 128 MiB、文件描述符 128；临时仓库始终清理。Compose 提供 256 MiB 临时盘。
 
 ## 管理 API
 
 - GET /api/sources：自己的来源
-- POST /api/sources：kind=upload + name，或 kind=github + name + repository + branch
+- POST /api/sources：kind=upload + name，或 kind=git（兼容 github）+ name + repository + branch
 - GET /api/sources/:id：文件大小、当前已发布入口、revision
 - DELETE /api/sources/:id：删除来源及其发布文章
 - POST /api/sources/:id/upload：multipart，每个文件名使用 encodeURIComponent(相对路径)
@@ -27,12 +29,12 @@ GitHub 来源填写 owner/repository（也可提供 https://github.com/owner/rep
 
 ## 私有仓库 PAT
 
-POST /api/sources/:id/sync 可带 JSON {token: "..."}。token 只保留在当次请求内存，不存数据库、不写日志、不返回浏览器；同步成功/切换来源后清空界面输入。fine-grained PAT 仅授予目标仓库 Contents: read，classic PAT 需要 repo 权限（范围更广），组织仓库可能需要批准/SSO。使用最新 GitHub REST API 2026-03-10。
+POST /api/sources/:id/sync 可带 JSON {token: "...", username: "..."}。token 可为平台 PAT 或 HTTPS 密码；用户名按服务要求填写，缺省 GitLab.com 使用 oauth2，其他服务使用 x-access-token。token 不含控制字符，用户名不含冒号或控制字符。认证只保留在当次请求与 Git 子进程内存，不写 URL、命令行参数、磁盘、数据库、日志或 API 响应。通过作用于目标 URL 的 HTTP Basic Authorization 发送；清空系统/全局 Git 配置，不调用凭据助手。GitHub PAT 推荐目标仓库 Contents: read 权限。
 
-带 token 的请求先使用 Authorization 访问 GitHub API，将 zipball 的 302 地址严格校验为 https://codeload.github.com，再下载签名地址；不会向重定向目标转发 Authorization。拒绝非允许主机、非 HTTPS、内嵌凭据和额外端口。GitHub 返回权限/额度错误时不暴露 token。
+私有仓库内容仍属于用户私有草稿；用户点击发布的入口和文章引用的图片将公开，目前没有文章权限控制。仓库可见性不自动成为博客文章的访问权限。
 
-私有仓库内容仍属于用户私有草稿；用户点击发布的入口和文章引用的图片将公开，目前没有文章权限控制。GitHub 仓库的可见性不自动成为博客文章的访问权限。
+参考：[Git fetch](https://git-scm.com/docs/git-fetch)、[Git HTTP 配置](https://git-scm.com/docs/git-config)。
 
-参考：[GitHub 仓库 ZIP API 与 token 权限](https://docs.github.com/en/rest/repos/contents#download-a-repository-archive-zip)。
+### 固定 Commit
 
-PAT 测试覆盖请求头转发边界、分支含斜杠、恶意下载重定向拒绝、目录 ZIP 和符号链接拒绝，以及管理 API 不返回 token。
+新建仓库可提供可选 commit（完整 40 或 64 位十六进制 SHA，不接受缩写）；不填时使用 branch（默认 main）。target_commit 保存所选目标，commit_sha 保存上次实际同步结果。同步请求可带 commit 切换目标，省略沿用目标、空字符串恢复跟随分支；成功后在同一事务中更新文件与目标，失败保留原目标和快照。可在同步时选择已不在当前分支上的旧提交，但远端需允许按该 SHA 获取对象；不存在或服务不允许获取的 SHA 会明确失败。发布仍需用户再次勾选确认，切换提交不会自动替换已发布文章。

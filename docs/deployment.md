@@ -49,9 +49,9 @@ docker run --rm --user 0 -v "$PWD:/work:ro" -v haravatat_typst_packages:/package
 - 默认公开博客；私有仓库可使用 PAT 同步，但发布的内容公开。文章权限与 webhook 自动同步未实现。
 - 应用是单节点部署；编译服务同时接受一个任务，繁忙时用户稍后重试。多入口串行编译。
 - 草稿和发布快照存 PostgreSQL bytea；按用户限制 20 个来源、每来源 50 MiB/1000 文件，最多 30 个发布入口，PDF 最多 32 MiB。全站注册人数没有管理配额，公开开放前需按实际服务预算增加运营控制。
-- GitHub LFS/submodule 和 Markdown front matter、数学扩展暂不支持。
+- Git LFS/submodule 和 Markdown front matter、数学扩展暂不支持。
 - PDF 在手机上按宽度缩放，文字不重排；长文档使用按需 canvas 渲染。
-- 已在 Docker Desktop 实测镜像构建与三服务启动，真实 GitHub OAuth 仍需自己的 OAuth App 凭据。Compose config 已通过无 daemon 的语法与变量校验。真实 GitHub 仓库下载已验证固定 commit 与带认证 ZIP 重定向链路；未认证共享 IP 额度耗尽时可提供 PAT。
+- 已在 Docker Desktop 实测镜像构建与三服务启动，真实 GitHub OAuth 仍需自己的 OAuth App 凭据。Compose config 已通过无 daemon 的语法与变量校验。仓库同步使用系统 Git HTTPS 协议，运行镜像包含 Git、CA 证书与 prlimit；无需平台 API 额度。
 
 CI 使用 PostgreSQL 18 service，通过 TEST_DATABASE_URL 让同一组集成/浏览器测试使用真实 pg 驱动。每个测试 fixture 创建独立 schema，完成后清理；本地未设置该变量时使用 PGlite。仅向专用测试数据库提供该变量，需拥有 CREATE SCHEMA 权限，不能使用生产库。
 
@@ -74,3 +74,5 @@ docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
 - 通过应用 API 写入临时工作区、发布 Markdown 与 Typst，验证真实 PostgreSQL 存储和远程编译服务。中文 CJK 字体、跨目录 include、显式分页编译成功，PDF 为 15120 bytes。
 - 将入口改为越界 read 后发布返回 422，已发布 PDF 字节保持一致。临时用户及其工作区、会话、文章已级联清理，预览数据库不保留测试内容。
 - 运行镜像的 npm audit --omit=dev 报告 Fastify 5.12.5 的一项 low 告警（GHSA-389g-gv7q-r4x8，header propertyNames 大小写校验）；本次未修改依赖锁，后续依赖升级时处理。
+
+本地直接运行 API 时也需安装 git、CA 证书与 Linux util-linux（prlimit）。仓库 URL 仅允许公网 HTTPS；自建服务需有公开可解析域名及有效 TLS 证书。应用 /tmp 临时盘为 256 MiB，Git 获取的临时 pack 也计入该限额。

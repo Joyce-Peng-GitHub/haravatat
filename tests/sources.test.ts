@@ -5,7 +5,6 @@ import { loadConfig } from '../server/config.js';
 import { hash } from '../server/auth.js';
 import { testDatabase } from './database.js';
 import { virtualPath, validateFiles } from '../server/files.js';
-import { repositoryName } from '../server/repository.js';
 
 test('virtual paths reject traversal, duplicates, directory conflicts and quotas', () => {
   for (const path of [
@@ -27,8 +26,6 @@ test('virtual paths reject traversal, duplicates, directory conflicts and quotas
     ]),
   );
   assert.throws(() => validateFiles([{ path: 'a', content: Buffer.alloc(8 * 1024 * 1024 + 1) }]));
-  assert.equal(repositoryName('https://github.com/alice/notes.git'), 'alice/notes');
-  assert.throws(() => repositoryName('https://localhost/internal'));
 });
 
 test('source operations enforce user isolation and sync transactionally', async () => {
@@ -40,11 +37,17 @@ test('source operations enforce user isolation and sync transactionally', async 
   );
   let failSync = false;
   let observedToken: string | undefined;
+  let observedUsername: string | undefined;
+  let observedRepository: string | undefined;
+  let observedCommit: string | undefined;
   const app = await createApp({
     db,
     config: loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgres://unused' }),
     repositories: {
-      async snapshot(_repository, _branch, token) {
+      async snapshot(repository, _branch, token, username, commit) {
+        observedRepository = repository;
+        observedCommit = commit;
+        observedUsername = username;
         observedToken = token;
         if (failSync) throw new Error('network failed');
         return {
@@ -95,29 +98,78 @@ test('source operations enforce user isolation and sync transactionally', async 
     assert.equal((await req('GET', `${base}/file?path=notes%2Fhello.md`)).body, '# Hello');
     assert.equal((await req('DELETE', `${base}/file?path=notes`)).statusCode, 200);
     assert.equal((await req('GET', base)).json().files.length, 0);
+    const legacy = await req('POST', '/api/sources', {
+      kind: 'github',
+      name: 'legacy',
+      repository: 'alice/notes',
+      branch: 'main',
+    });
+    assert.equal(legacy.statusCode, 201);
+    assert.equal(
+      (await req('POST', `/api/sources/${legacy.json().source.id}/sync`)).statusCode,
+      200,
+    );
     const repo = (
       await req('POST', '/api/sources', {
-        kind: 'github',
+        kind: 'git',
         name: 'repo',
-        repository: 'alice/notes',
+        repository: 'https://gitlab.com/group/subgroup/notes.git',
         branch: 'feature/blog',
+        commit: 'a'.repeat(40),
       })
     ).json().source.id;
     assert.equal(
-      (await req('POST', `/api/sources/${repo}/sync`, { token: 'github_pat_test' })).statusCode,
+      (
+        await req('POST', `/api/sources/${repo}/sync`, {
+          token: 'test.token+/=secret',
+          username: 'git-user',
+        })
+      ).statusCode,
       200,
     );
-    assert.equal(observedToken, 'github_pat_test');
+    assert.equal(observedToken, 'test.token+/=secret');
+    assert.equal(observedUsername, 'git-user');
+    assert.equal(observedCommit, 'a'.repeat(40));
+    assert.equal(observedRepository, 'https://gitlab.com/group/subgroup/notes.git');
     assert.equal(
-      JSON.stringify((await req('GET', `/api/sources/${repo}`)).json()).includes('github_pat_test'),
+      JSON.stringify((await req('GET', `/api/sources/${repo}`)).json()).includes(
+        'test.token+/=secret',
+      ),
       false,
     );
     assert.equal(
       (await req('GET', `/api/sources/${repo}`)).json().source.commit_sha,
       'a'.repeat(40),
     );
+    assert.equal(
+      (
+        await req('POST', '/api/sources', {
+          kind: 'git',
+          name: 'invalid',
+          repository: 'https://gitlab.com/group/repo.git',
+          commit: 'invalid',
+        })
+      ).statusCode,
+      400,
+    );
+    assert.equal(
+      (await req('POST', `/api/sources/${repo}/sync`, { commit: 'b'.repeat(40) })).statusCode,
+      200,
+    );
+    assert.equal(observedCommit, 'b'.repeat(40));
+    assert.equal(
+      (await req('GET', `/api/sources/${repo}`)).json().source.target_commit,
+      'b'.repeat(40),
+    );
+    assert.equal((await req('POST', `/api/sources/${repo}/sync`, { commit: '' })).statusCode, 200);
+    assert.equal(observedCommit, undefined);
+    assert.equal((await req('GET', `/api/sources/${repo}`)).json().source.target_commit, null);
     failSync = true;
-    assert.equal((await req('POST', `/api/sources/${repo}/sync`)).statusCode, 500);
+    assert.equal(
+      (await req('POST', `/api/sources/${repo}/sync`, { commit: 'c'.repeat(40) })).statusCode,
+      500,
+    );
+    assert.equal((await req('GET', `/api/sources/${repo}`)).json().source.target_commit, null);
     assert.equal((await req('GET', `/api/sources/${repo}`)).json().files.length, 1);
     assert.equal(
       (await req('PUT', `/api/sources/${repo}/file`, { path: 'x.md', content: 'x' })).statusCode,

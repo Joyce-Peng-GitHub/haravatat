@@ -10,6 +10,7 @@ COPY web ./web
 RUN npm run build
 
 FROM node:24-trixie-slim AS application
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates util-linux && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./

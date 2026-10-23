@@ -1,72 +1,182 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { crc32 } from 'node:zlib';
-import { githubRepositories, extractRepository } from '../server/repository.js';
-function archive(path = 'repo/notes/hello.md', mode = 0o100644) {
-  const name = Buffer.from(path),
-    data = Buffer.from('# Hello');
-  const local = Buffer.alloc(30),
-    central = Buffer.alloc(46),
-    end = Buffer.alloc(22);
-  local.writeUInt32LE(0x04034b50);
-  local.writeUInt16LE(20, 4);
-  local.writeUInt32LE(crc32(data), 14);
-  local.writeUInt32LE(data.length, 18);
-  local.writeUInt32LE(data.length, 22);
-  local.writeUInt16LE(name.length, 26);
-  central.writeUInt32LE(0x02014b50);
-  central.writeUInt16LE(0x0314, 4);
-  central.writeUInt16LE(20, 6);
-  central.writeUInt32LE(crc32(data), 16);
-  central.writeUInt32LE(data.length, 20);
-  central.writeUInt32LE(data.length, 24);
-  central.writeUInt16LE(name.length, 28);
-  central.writeUInt32LE((mode << 16) >>> 0, 38);
-  const content = Buffer.concat([local, name, data]),
-    directory = Buffer.concat([central, name]);
-  end.writeUInt32LE(0x06054b50);
-  end.writeUInt16LE(1, 8);
-  end.writeUInt16LE(1, 10);
-  end.writeUInt32LE(directory.length, 12);
-  end.writeUInt32LE(content.length, 16);
-  return Buffer.concat([content, directory, end]);
-}
-test('repository ZIP preserves directories and refuses traversal and symlinks', async () => {
-  assert.equal((await extractRepository(archive()))[0].path, 'notes/hello.md');
-  await assert.rejects(extractRepository(archive('repo/../secret')));
-  await assert.rejects(extractRepository(archive('repo/link', 0o120777)), /符号链接/);
+import { execFileSync } from 'node:child_process';
+import { mkdtemp, rm, writeFile, mkdir, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createServer, connect } from 'node:net';
+import { once } from 'node:events';
+import {
+  repositoryUrl,
+  repositoryBranch,
+  repositoryCommit,
+  repositoryTarget,
+  repositoryProxy,
+  gitSnapshotFiles,
+} from '../server/repository.js';
+
+test('HTTPS clone URLs support arbitrary hosts, nested paths and ports with GitHub shorthand compatibility', () => {
+  assert.equal(repositoryUrl('alice/notes'), 'https://github.com/alice/notes');
+  for (const url of [
+    'https://gitlab.com/group/subgroup/notes.git',
+    'https://codeberg.org/alice/notes.git',
+    'https://git.example.com:8443/scm/notes.git',
+    'https://github.com/alice/notes.git',
+  ])
+    assert.equal(repositoryUrl(url), url);
+  for (const url of [
+    'http://example.com/repo',
+    'ssh://git@example.com/repo',
+    'git@example.com:repo',
+    'file:///tmp/repo',
+    'https://user:secret@example.com/repo',
+    'https://example.com/repo?token=secret',
+    'https://example.com/repo#main',
+    'https://example.com/\\repo',
+    'https://example.com/',
+  ])
+    assert.throws(() => repositoryUrl(url));
+  assert.equal(repositoryCommit('A'.repeat(40)), 'a'.repeat(40));
+  assert.equal(repositoryCommit('b'.repeat(64)), 'b'.repeat(64));
+  for (const sha of ['abc123', 'main', 'x'.repeat(40), 'a'.repeat(41)])
+    assert.throws(() => repositoryCommit(sha));
+  assert.equal(repositoryBranch('feature/blog'), 'feature/blog');
+  for (const branch of [
+    '-main',
+    '../main',
+    'refs//main',
+    'main.lock',
+    'main@{1}',
+    'main:tag',
+    'main\n',
+  ])
+    assert.throws(() => repositoryBranch(branch));
 });
-test('private repository PAT only authorizes GitHub API and redirect is restricted', async () => {
-  const original = globalThis.fetch;
-  const calls: { url: string; authorization: string | null }[] = [];
-  let redirect = 'https://codeload.github.com/alice/notes/legacy.zip/commit?token=download';
-  globalThis.fetch = async (input, init) => {
-    const url = String(input);
-    calls.push({ url, authorization: new Headers(init?.headers).get('Authorization') });
-    if (url.includes('/commits/')) return Response.json({ sha: 'a'.repeat(40) });
-    if (url.includes('/zipball/'))
-      return new Response(null, { status: 302, headers: { location: redirect } });
-    return new Response(new Uint8Array(archive()));
+
+test('repository destinations reject private, mapped and mixed DNS answers before fetching', async () => {
+  for (const host of [
+    '127.0.0.1',
+    '10.0.0.1',
+    '169.254.169.254',
+    '192.168.1.1',
+    '0x7f000001',
+    '[::1]',
+    '[::ffff:127.0.0.1]',
+    '[fc00::1]',
+    '[2002:7f00:1::]',
+  ])
+    await assert.rejects(repositoryTarget(`https://${host}/repo`), /公网/);
+  await assert.rejects(
+    repositoryTarget('https://git.example.com/repo', async () => [
+      { address: '93.184.216.34', family: 4 },
+      { address: '10.0.0.1', family: 4 },
+    ]),
+    /公网/,
+  );
+  const target = await repositoryTarget('https://git.example.com:8443/group/repo.git', async () => [
+    { address: '93.184.216.34', family: 4 },
+  ]);
+  assert.equal(target.address, '93.184.216.34');
+  assert.equal(target.url, 'https://git.example.com:8443/group/repo.git');
+});
+
+test('native Git object snapshots preserve binary files and fixed commits, rejecting symlinks and oversized blobs', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'git-test-'));
+  const git = (...args: string[]) =>
+    execFileSync('git', args, {
+      cwd: directory,
+      env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' },
+    })
+      .toString()
+      .trim();
+  const commit = () => {
+    git('add', '.');
+    git('-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'snapshot');
+    return git('rev-parse', 'HEAD');
   };
   try {
-    const snapshot = await githubRepositories.snapshot(
-      'alice/notes',
-      'feature/blog',
-      'github_pat_test',
+    git('init', '-q');
+    await mkdir(join(directory, '笔记'));
+    await writeFile(join(directory, '笔记', 'entry.typ'), '= Hello');
+    const binary = Buffer.from([0, 1, 255, 13, 10]);
+    await writeFile(join(directory, 'image.png'), binary);
+    const first = commit();
+    await writeFile(join(directory, '笔记', 'entry.typ'), '= Updated');
+    const second = commit();
+    const files = await gitSnapshotFiles(directory, first);
+    assert.equal(files.find((f) => f.path === '笔记/entry.typ')?.content.toString(), '= Hello');
+    assert.deepEqual(files.find((f) => f.path === 'image.png')?.content, binary);
+    assert.equal(
+      (await gitSnapshotFiles(directory, second))
+        .find((f) => f.path === '笔记/entry.typ')
+        ?.content.toString(),
+      '= Updated',
     );
-    assert.equal(snapshot.files[0].path, 'notes/hello.md');
-    assert.match(calls[0].url, /feature%2Fblog/);
-    assert.equal(calls[0].authorization, 'Bearer github_pat_test');
-    assert.equal(calls[1].authorization, 'Bearer github_pat_test');
-    assert.equal(calls[2].authorization, null);
-    calls.length = 0;
-    redirect = 'https://attacker.invalid/archive';
-    await assert.rejects(
-      githubRepositories.snapshot('alice/notes', 'main', 'github_pat_test'),
-      /允许范围/,
-    );
-    assert.equal(calls.length, 2);
+    await symlink('/etc/passwd', join(directory, 'link'));
+    await assert.rejects(gitSnapshotFiles(directory, commit()), /符号链接/);
+    await rm(join(directory, 'link'));
+    await writeFile(join(directory, 'large'), Buffer.alloc(8 * 1024 * 1024 + 1));
+    await assert.rejects(gitSnapshotFiles(directory, commit()), /超过/);
   } finally {
-    globalThis.fetch = original;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('Git CONNECT proxy pins the validated IP and refuses different hosts, ports and plain requests', async () => {
+  let connections = 0;
+  const upstream = createServer((socket) => {
+    connections++;
+    socket.on('data', (chunk) => socket.write(chunk));
+  });
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+  const address = upstream.address();
+  assert.ok(address && typeof address !== 'string');
+  const proxy = await repositoryProxy({
+    url: `https://git.example.com:${address.port}/repo`,
+    address: '127.0.0.1',
+  });
+  const port = Number(new URL(proxy.url).port);
+  const request = (line: string) =>
+    new Promise<string>((resolve, reject) => {
+      const socket = connect(port, '127.0.0.1', () => socket.write(line));
+      let data = '';
+      socket.on('data', (chunk) => {
+        data += chunk.toString();
+        socket.destroy();
+      });
+      socket.on('error', reject);
+      socket.on('close', () => resolve(data));
+    });
+  try {
+    assert.match(
+      await request(
+        `CONNECT git.example.com:${address.port} HTTP/1.1\r\nHost: git.example.com\r\n\r\n`,
+      ),
+      /200 Connection Established/,
+    );
+    assert.equal(connections, 1);
+    assert.equal(
+      await request('CONNECT 169.254.169.254:443 HTTP/1.1\r\nHost: forbidden\r\n\r\n'),
+      '',
+    );
+    assert.equal(
+      await request(
+        `CONNECT other.example.com:${address.port} HTTP/1.1\r\nHost: forbidden\r\n\r\n`,
+      ),
+      '',
+    );
+    assert.equal(
+      await request('CONNECT git.example.com:1 HTTP/1.1\r\nHost: forbidden\r\n\r\n'),
+      '',
+    );
+    assert.match(
+      await request('GET http://169.254.169.254/latest HTTP/1.1\r\nHost: forbidden\r\n\r\n'),
+      /403/,
+    );
+    assert.equal(connections, 1);
+  } finally {
+    await proxy.close();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
   }
 });
