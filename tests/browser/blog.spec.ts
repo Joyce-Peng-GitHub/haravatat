@@ -148,7 +148,7 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
         mimeType: 'text/markdown',
         buffer: Buffer.from(
           [
-            '# 浏览器发布\n\n**你好，世界**\n<script>window.xss=1</script>',
+            '# 浏览器发布\n\n[TOC]\n\n## 正文\n\n**你好，世界**\n<script>window.xss=1</script>',
             String.raw`$\LaTeX$ 与 \(a_1+\frac{1}{2}\)`,
             '$$\n\\sum_{i=1}^n i\n$$',
             String.raw`\[\int_0^1 x\,dx\]`,
@@ -193,6 +193,11 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
   await page.setViewportSize({ width: 1440, height: 1050 });
   await page.getByRole('link', { name: '阅读', exact: true }).click();
   await expect(page.locator('.markdown-body strong').first()).toHaveText('你好，世界');
+  await expect(
+    page
+      .getByRole('navigation', { name: '文章目录' })
+      .getByRole('link', { name: '正文', exact: true }),
+  ).toHaveAttribute('href', `#heading-${encodeURIComponent('正文')}`);
   await expect(page.locator('.markdown-body mark strong')).toHaveText('高亮文字');
   await expect(page.locator('.markdown-body del')).toHaveText('已删除');
   await expect(page.locator('.markdown-body .katex')).toHaveCount(8);

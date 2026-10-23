@@ -181,6 +181,25 @@ export function Article() {
       document.title = 'Haravatat · 知识与文字';
     };
   }, [id]);
+  useEffect(() => {
+    if (post?.format !== 'markdown' || post.id !== id) return;
+    const scrollToFragment = () => {
+      if (!window.location.hash) return;
+      try {
+        const fragment = window.location.hash.slice(1);
+        const target =
+          document.getElementById(fragment) ||
+          document.getElementById(decodeURIComponent(fragment));
+        if (target?.closest('.markdown-body')) target.scrollIntoView();
+      } catch {
+        // A malformed URL fragment must not prevent reading the article.
+      }
+    };
+    // Article content arrives after the browser's initial fragment lookup.
+    scrollToFragment();
+    window.addEventListener('hashchange', scrollToFragment);
+    return () => window.removeEventListener('hashchange', scrollToFragment);
+  }, [post, id]);
   return (
     <main className="article-page">
       <Link className="back-link" to="/">

@@ -114,3 +114,77 @@ $\notARealCommand{x}$
   assert(html.includes('正文继续'));
   assert(html.includes('notARealCommand'));
 });
+
+test('TOC markers survive publishing and produce unique, nested Unicode heading links', () => {
+  const { html } = publishAndRead(
+    [
+      '# 文章',
+      '[TOC]',
+      '## 中文 **标题** 与 `code`',
+      '#### 跳级 $x^2$',
+      '## 中文 标题 与 code',
+      '## 中文 标题 与 code-1',
+      '## 中文 标题 与 code',
+      '## !!!',
+      '## ???',
+      '## ![图示](https://example.com/image.png)',
+      '[toc]',
+      '正文[^note]',
+      '[^note]: 脚注正文\n\n    ## 脚注标题',
+    ].join('\n\n'),
+  );
+  const headings = [...html.matchAll(/<h[1-6] id="(heading-[^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(headings, [
+    'heading-文章',
+    'heading-中文-标题-与-code',
+    'heading-跳级-x2',
+    'heading-中文-标题-与-code-1',
+    'heading-中文-标题-与-code-1-1',
+    'heading-中文-标题-与-code-2',
+    'heading-section',
+    'heading-section-1',
+    'heading-图示',
+  ]);
+  assert.equal(new Set(headings).size, headings.length);
+  const menus = [
+    ...html.matchAll(/<nav class="markdown-toc" aria-label="文章目录">([\s\S]*?)<\/nav>/g),
+  ];
+  assert.equal(menus.length, 2);
+  for (const menu of menus) {
+    const targets = [...menu[1].matchAll(/href="#([^"]+)"/g)].map((match) =>
+      decodeURIComponent(match[1]),
+    );
+    assert.deepEqual(targets, headings);
+    assert(!menu[1].includes('脚注标题'));
+    assert(!menu[1].includes('Footnotes'));
+    assert(!/<img|<strong|<code|<span class="katex"/.test(menu[1]));
+    assert.match(
+      menu[1],
+      /<ol><li><a[^>]*>文章<\/a><ol><li><a[^>]*>中文 标题 与 code<\/a><ol><li>/,
+    );
+  }
+  assert.match(html, /data-footnotes/);
+});
+
+test('TOC expands only standalone top-level markers and titles have anchors without a TOC', () => {
+  const { html } = publishAndRead(
+    [
+      '# Heading',
+      '`[TOC]`',
+      '```markdown\n[TOC]\n```',
+      '> [TOC]',
+      '普通句子中的 [TOC] 保持原样。',
+      '[TOC] 不是独占标记',
+      '- [TOC]',
+    ].join('\n\n'),
+  );
+  assert(!html.includes('markdown-toc'));
+  assert.match(html, /<h1 id="heading-heading">Heading<\/h1>/);
+  assert.match(html, /<code>\[TOC\]<\/code>/);
+  assert.match(html, /<blockquote>\n<p>\[TOC\]<\/p>/);
+  assert(!publishAndRead('[TOC]').html.includes('markdown-toc'));
+  // Text used in the menu stays escaped, not executable HTML.
+  const untrusted = publishAndRead('[TOC]\n\n## `</a><script>alert(1)</script>`').html;
+  assert(!untrusted.includes('<script>'));
+  assert(untrusted.includes('&lt;script&gt;'));
+});

@@ -1418,3 +1418,34 @@ em {
     justify-content: start;
   }
 }
+
+.markdown-body [id] {
+  scroll-margin-top: 24px;
+}
+.markdown-body .markdown-toc {
+  display: block;
+  margin: 1.5em 0;
+  padding: 18px 22px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #f0f3ea;
+  font-size: 0.9em;
+}
+.markdown-body .markdown-toc-title {
+  margin: 0 0 8px;
+  font-weight: 600;
+}
+.markdown-body .markdown-toc ol {
+  list-style: none;
+  margin: 0;
+  padding-inline-start: 1.2em;
+}
+.markdown-body .markdown-toc > ol {
+  padding-inline-start: 0;
+}
+.markdown-body .markdown-toc li {
+  margin: 5px 0;
+}
+.markdown-body .markdown-toc a {
+  overflow-wrap: anywhere;
+}
