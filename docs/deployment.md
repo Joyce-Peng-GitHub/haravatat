@@ -80,3 +80,11 @@ docker compose -f compose.yaml -f compose.local.yaml up --build -d --wait
 当前 Docker Desktop 网络使用 Fake-IP DNS（198.18.0.0/15、fdfe::），直接解析会被公网地址校验拒绝。compose.local.yaml 显式启用 Cloudflare HTTPS DNS JSON 获取真实地址，再通过固定 IP 隧道获取仓库；生产默认仍使用系统 DNS。该选项不放行任何私有或保留地址。参考 [Cloudflare DNS JSON API](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/dns-json/)。
 
 镜像构建复用同一份 npm ci 依赖，再 prune 开发依赖供应用/编译服务使用。Git 的 Debian 安装包通过 HTTPS 下载（DEBIAN_MIRROR 构建参数默认 Debian 官方源；本地预览针对当前网络使用 USTC 镜像，APT 继续校验 Debian 仓库签名）；系统 CA 包安装前临时使用 Node 自带 Mozilla CA 根验证证书，安装后删除临时 CA 文件。
+
+### HTTPS Git 与 Commit 验证（2026-10-23）
+
+- 12 项后端测试通过；开发页面与生产静态页面各 2 项浏览器测试通过，覆盖 GitLab 多级 URL、用户名/token 输入、Commit 创建/切换/恢复分支及手机布局。构建、类型与格式检查通过。
+- 系统 Git 实际获取 GitHub octocat/Hello-World 的 master，commit 为 7fd1a60b01f91b314f59955a4e4d4e80d8edf11d，并按该 SHA 重复获取相同快照。
+- 调整桌面网络后，通过运行中的应用 API 获取 GitLab gitlab-examples/nodejs 的 master（17 文件，892a1f16725e56cc3a2cb0d677be42935c8fc262），再固定到该 SHA。不存在的 SHA 返回 502，原 revision、文件和目标 Commit 保持不变；回环地址同步返回 400。
+- 同一容器通过隔离编译服务生成 9947-byte PDF；app、db、compiler 均为 healthy。API 测试使用临时身份和会话，结束后已级联清理所有测试数据。
+- 未使用真实私有仓库凭据；用户名/token 的传递与不持久化通过 API 测试验证。桌面网络曾出现 DNS/连接错误，调整网络后本轮完整检查通过。遇到此类错误应先检查网络，不能通过放行私有地址解决。
