@@ -39,6 +39,11 @@ CREATE TABLE IF NOT EXISTS repository_credentials (
   encrypted bytea NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS directories (
+  source_id uuid NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  path text NOT NULL,
+  PRIMARY KEY (source_id, path)
+);
 CREATE TABLE IF NOT EXISTS files (
   source_id uuid NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
   path text NOT NULL,

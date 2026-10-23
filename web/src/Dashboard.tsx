@@ -44,6 +44,7 @@ export function Dashboard() {
       null,
     ),
     [move, setMove] = useState<{ from: string; to: string } | null>(null);
+  const [folder, setFolder] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null);
   const loadSources = async () => {
@@ -80,6 +81,7 @@ export function Dashboard() {
     setWorkspace(null);
     setEditor(null);
     setMove(null);
+    setFolder(null);
     setError('');
     setSuccess('');
     setFilter('');
@@ -235,6 +237,26 @@ export function Dashboard() {
       if (fileInput.current) fileInput.current.value = '';
       if (folderInput.current) folderInput.current.value = '';
     });
+  };
+  const deletePath = (path: string, directory = false) => {
+    if (
+      !sourceId ||
+      !window.confirm(
+        `删除${directory ? '文件夹及其全部草稿' : '草稿'} ${path}？已发布文章会保留到下次发布。`,
+      )
+    )
+      return;
+    void run(
+      '删除',
+      async () => {
+        await api(`/api/sources/${sourceId}/file?path=${encodeURIComponent(path)}`, {
+          method: 'DELETE',
+        });
+        await loadWorkspace(sourceId);
+        await loadSources();
+      },
+      '草稿已删除，线上文章尚未改变。',
+    );
   };
   const publish = () => {
     if (!sourceId) return;
@@ -676,6 +698,9 @@ export function Dashboard() {
                     >
                       ＋ 新建文本
                     </button>
+                    <button disabled={Boolean(busy)} onClick={() => setFolder('')}>
+                      ＋ 新建文件夹
+                    </button>
                     <button disabled={Boolean(busy)} onClick={() => setMove({ from: '', to: '' })}>
                       移动文件 / 目录
                     </button>
@@ -688,7 +713,7 @@ export function Dashboard() {
                   <span>大小</span>
                   <span>操作</span>
                 </div>
-                {!workspace.files.length ? (
+                {!workspace.files.length && !workspace.directories.length ? (
                   <div className="empty">
                     <p>
                       {source.kind !== 'upload'
@@ -700,7 +725,55 @@ export function Dashboard() {
                   <FileTree
                     key={source.id}
                     files={workspace.files}
+                    directories={workspace.directories}
                     filter={filter}
+                    renderDirectoryActions={
+                      source.kind === 'upload'
+                        ? (path) => (
+                            <>
+                              <button
+                                disabled={Boolean(busy)}
+                                aria-label={`在 ${path} 新建文件`}
+                                onClick={() => setEditor({ path: `${path}/`, content: '' })}
+                              >
+                                新建文件
+                              </button>
+                              <button
+                                disabled={Boolean(busy)}
+                                aria-label={`在 ${path} 新建文件夹`}
+                                onClick={() => setFolder(`${path}/`)}
+                              >
+                                新建文件夹
+                              </button>
+                              <button
+                                disabled={Boolean(busy)}
+                                aria-label={`上传到 ${path}`}
+                                onClick={() => {
+                                  setPrefix(path);
+                                  fileInput.current?.click();
+                                }}
+                              >
+                                上传文件
+                              </button>
+                              <button
+                                disabled={Boolean(busy)}
+                                aria-label={`重命名文件夹 ${path}`}
+                                onClick={() => setMove({ from: path, to: path })}
+                              >
+                                重命名 / 移动
+                              </button>
+                              <button
+                                disabled={Boolean(busy)}
+                                className="danger-text"
+                                aria-label={`删除文件夹 ${path}`}
+                                onClick={() => deletePath(path, true)}
+                              >
+                                删除
+                              </button>
+                            </>
+                          )
+                        : undefined
+                    }
                     renderFile={(file, depth) => (
                       <div
                         className="file-row"
@@ -779,27 +852,16 @@ export function Dashboard() {
                                 </button>
                               )}
                               <button
+                                disabled={Boolean(busy)}
+                                aria-label={`重命名文件 ${file.path}`}
+                                onClick={() => setMove({ from: file.path, to: file.path })}
+                              >
+                                重命名 / 移动
+                              </button>
+                              <button
                                 className="danger-text"
                                 disabled={Boolean(busy)}
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      `删除草稿 ${file.path}？已发布文章会保留到下次发布。`,
-                                    )
-                                  )
-                                    void run(
-                                      '删除',
-                                      async () => {
-                                        await api(
-                                          `/api/sources/${source.id}/file?path=${encodeURIComponent(file.path)}`,
-                                          { method: 'DELETE' },
-                                        );
-                                        await loadWorkspace(source.id);
-                                        await loadSources();
-                                      },
-                                      '草稿已删除，线上文章尚未改变。',
-                                    );
-                                }}
+                                onClick={() => deletePath(file.path)}
                               >
                                 删除
                               </button>
@@ -999,6 +1061,59 @@ export function Dashboard() {
           </section>
         </div>
       )}
+      {folder !== null && sourceId && (
+        <div className="modal-backdrop">
+          <section className="modal" role="dialog" aria-modal="true" aria-labelledby="folder-title">
+            <button
+              className="modal-close"
+              aria-label="关闭"
+              disabled={Boolean(busy)}
+              onClick={() => setFolder(null)}
+            >
+              ×
+            </button>
+            <h2 id="folder-title">新建文件夹</h2>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void run(
+                  '新建文件夹',
+                  async () => {
+                    await api(`/api/sources/${sourceId}/directory`, {
+                      method: 'POST',
+                      body: { path: folder },
+                    });
+                    setFolder(null);
+                    await loadWorkspace(sourceId);
+                  },
+                  '文件夹已创建，可以在其中新建或上传文件。',
+                );
+              }}
+            >
+              <label>
+                文件夹路径
+                <input
+                  required
+                  autoFocus
+                  placeholder="notes/drafts"
+                  disabled={Boolean(busy)}
+                  value={folder}
+                  onChange={(event) => setFolder(event.target.value)}
+                />
+              </label>
+              <p>支持多级路径，空文件夹也会保存。</p>
+              <button className="button" disabled={Boolean(busy)}>
+                创建文件夹
+              </button>
+            </form>
+            {error && (
+              <p className="notice error" role="alert">
+                {error}
+              </p>
+            )}
+          </section>
+        </div>
+      )}
       {move && sourceId && (
         <div className="modal-backdrop">
           <section className="modal" role="dialog" aria-modal="true" aria-labelledby="move-title">
@@ -1010,7 +1125,7 @@ export function Dashboard() {
             >
               ×
             </button>
-            <h2 id="move-title">移动文件或目录</h2>
+            <h2 id="move-title">重命名或移动文件与文件夹</h2>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -1020,6 +1135,7 @@ export function Dashboard() {
                     await api(`/api/sources/${sourceId}/move`, { method: 'POST', body: move });
                     setMove(null);
                     await loadWorkspace(sourceId);
+                    await loadSources();
                   },
                   '路径已更新。请检查入口中的相对引用并重新发布。',
                 );
@@ -1029,6 +1145,7 @@ export function Dashboard() {
                 原路径
                 <input
                   required
+                  disabled={Boolean(busy)}
                   value={move.from}
                   placeholder="notes"
                   onChange={(event) => setMove({ ...move, from: event.target.value })}
@@ -1038,13 +1155,15 @@ export function Dashboard() {
                 新路径
                 <input
                   required
+                  disabled={Boolean(busy)}
+                  autoFocus
                   value={move.to}
                   placeholder="articles/notes"
                   onChange={(event) => setMove({ ...move, to: event.target.value })}
                 />
               </label>
               <button className="button" disabled={Boolean(busy)}>
-                移动
+                保存路径
               </button>
             </form>
             {error && (

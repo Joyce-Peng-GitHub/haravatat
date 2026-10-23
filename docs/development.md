@@ -36,7 +36,7 @@ Schema 初始化使用事务和 PostgreSQL advisory lock。后续改变已有表
 
 工作区配额集中在 shared/limits.ts（1 GiB / 1024 文件，无独立单文件上限），前后端共用。storage.ts 封装内联/分块 PostgreSQL 文件存储；uploads.ts 供应用上传与内部编译服务复用流式读取和配额校验。Docker 三个构建目标均包含 shared/。容量修改需同时检查数据库传输、编译协议、容器资源和 docs/files.md、docs/deployment.md。
 
-credentials.ts 封装仓库凭据的加密存取，密文与 sources 分表，来源 API 不读取或返回密文。数据库新增 auto_sync 字段及 repository_credentials 表，启动迁移保持可重入；既有工作区默认关闭自动同步。工作台仅在进入仓库时调用已有同步 API，服务端没有定时任务。FileTree.tsx 处理目录结构、筛选和折叠，入口选择与发布仍由 Dashboard 管理。
+credentials.ts 封装仓库凭据的加密存取，密文与 sources 分表，来源 API 不读取或返回密文。数据库新增 auto_sync 字段及 repository_credentials 表，启动迁移保持可重入；既有工作区默认关闭自动同步。工作台仅在进入仓库时调用已有同步 API，服务端没有定时任务。directories.ts 统一目录祖先推导、持久化与文件/目录冲突校验；新表可重入创建且不改写现有文件。目录创建、移动、删除沿用来源行锁，元数据操作不读取大文件内容。FileTree.tsx 处理目录结构、筛选、折叠与目录行操作，入口选择与发布仍由 Dashboard 管理。
 
 ## Markdown 解析维护
 
@@ -52,10 +52,14 @@ scripts/compose-system-fonts.mjs 只使用 Node 内置模块、可选的 fc-list
 
 ## 文件夹上传回归
 
-浏览器回归通过真实 webkitdirectory 输入选择磁盘上的 notes/ 目录，包含 .git 元数据、二进制文件和中文嵌套文章，检查上传在 10 秒内完成、保留目录且不保存 .git。不能用普通多文件 File payload 代替目录选择器，这会遗漏浏览器目录选择带来的路径与隐藏文件行为。
+浏览器回归通过真实 webkitdirectory 输入选择磁盘上的 notes/ 目录，包含 .git 元数据、二进制文件和中文嵌套文章，检查上传在 10 秒内完成、默认过滤隐藏项，取消勾选则保留 .git。不能用普通多文件 File payload 代替目录选择器，这会遗漏浏览器目录选择带来的路径与隐藏文件行为。
 
 同一浏览器用例验证非法目标路径在发送前被拒绝、连接中断显示中文错误，以及再次选择同一文件夹能成功重试。
 
 tests/uploads.test.ts 通过真实 HTTP 慢速流上传非法路径与后续二进制数据，检查读完整个有界请求后才返回 JSON 400；sources 集成测试确认该错误不会部分写入文件或推进 revision。共享路径校验仍由原有 traversal/配额用例覆盖。
 
 文件夹上传浏览器回归覆盖默认勾选隐藏项过滤、嵌套隐藏目录和隐藏文件、取消过滤后完整保存 .git 元数据、非法目标路径上传前拒绝、网络失败提示及重试。隔离 fixture 不修改用户文件或现有工作区。
+
+虚拟目录回归同时覆盖 API 事务边界和浏览器操作：空目录刷新保留、嵌套新建、文件与目录重命名、递归删除确认、筛选折叠、手机无横向溢出；大文件分块移动仍由 sources.test.ts 验证内容完整。
+
+迁移回归从无 directories 表的旧 schema 升级，验证文件不变，并确认重复迁移保留已有空目录。目录移动回归还验证新前缀使子文件路径超过 500 字符时完整回滚。

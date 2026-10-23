@@ -302,3 +302,94 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
   await expect(page.getByRole('heading', { name: 'GitLab 来源测试' })).toBeVisible();
   expect(automaticRequests).toHaveLength(2);
 });
+
+test('virtual folders can be created, renamed, moved and deleted from the tree', async ({
+  page,
+}) => {
+  await page.route(/\/auth\/github$/, async (route) => {
+    const response = await route.fetch({ maxRedirects: 0 });
+    const state = new URL(response.headers().location).searchParams.get('state');
+    await route.fulfill({
+      response,
+      headers: {
+        ...response.headers(),
+        location: `${new URL(route.request().url()).origin}/auth/github/callback?code=test&state=${state}`,
+      },
+    });
+  });
+  await page.goto('/dashboard');
+  await page.getByRole('link', { name: '通过 GitHub 登录' }).click();
+  await page.getByRole('button', { name: '新建来源' }).click();
+  await page.getByLabel('来源名称').fill('目录操作测试');
+  await page.getByRole('button', { name: '创建来源' }).click();
+  await expect(page.getByRole('heading', { name: '目录操作测试' })).toBeVisible();
+  await page.getByRole('button', { name: '＋ 新建文件夹', exact: true }).click();
+  await page.getByLabel('文件夹路径', { exact: true }).fill('notes/empty');
+  await page.getByRole('button', { name: '创建文件夹', exact: true }).click();
+  await expect(page.getByRole('button', { name: '目录 notes/empty', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: '目录 notes/empty', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '在 notes/empty 新建文件', exact: true }).click();
+  await expect(page.getByLabel('相对文件路径')).toHaveValue('notes/empty/');
+  await page.getByLabel('相对文件路径').fill('notes/empty/article.md');
+  await page.getByLabel('文件内容').fill('# draft');
+  await page.getByRole('button', { name: '保存草稿', exact: true }).click();
+  await expect(
+    page.getByRole('checkbox', { name: '发布 notes/empty/article.md', exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole('button', { name: '重命名文件 notes/empty/article.md', exact: true })
+    .click();
+  await expect(page.getByLabel('原路径', { exact: true })).toHaveValue('notes/empty/article.md');
+  await page.getByLabel('新路径', { exact: true }).fill('notes/empty/renamed.md');
+  await page.getByRole('button', { name: '保存路径', exact: true }).click();
+  await expect(
+    page.getByRole('checkbox', { name: '发布 notes/empty/renamed.md', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '在 notes/empty 新建文件夹', exact: true }).click();
+  await expect(page.getByLabel('文件夹路径', { exact: true })).toHaveValue('notes/empty/');
+  await page.getByLabel('文件夹路径', { exact: true }).fill('notes/empty/child');
+  await page.getByRole('button', { name: '创建文件夹', exact: true }).click();
+  await expect(
+    page.getByRole('button', { name: '目录 notes/empty/child', exact: true }),
+  ).toBeVisible();
+  await page.getByRole('button', { name: '重命名文件夹 notes/empty', exact: true }).click();
+  await page.getByLabel('新路径', { exact: true }).fill('archive/moved');
+  await page.getByRole('button', { name: '保存路径', exact: true }).click();
+  await expect(
+    page.getByRole('checkbox', { name: '发布 archive/moved/renamed.md', exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: '目录 archive/moved/child', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('筛选文件').fill('child');
+  await expect(
+    page.getByRole('button', { name: '目录 archive/moved/child', exact: true }),
+  ).toBeVisible();
+  await page.getByLabel('筛选文件').clear();
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const directoryWidth = await page
+    .getByRole('button', { name: '目录 archive/moved', exact: true })
+    .evaluate((element) => element.getBoundingClientRect().width);
+  expect(directoryWidth).toBeGreaterThan(120);
+  await page.screenshot({ path: 'test-results/mobile-folders.png', fullPage: true });
+  page.once('dialog', (dialog) => dialog.dismiss());
+  await page.getByRole('button', { name: '删除文件夹 archive/moved', exact: true }).click();
+  await expect(
+    page.getByRole('checkbox', { name: '发布 archive/moved/renamed.md', exact: true }),
+  ).toBeVisible();
+  page.once('dialog', (dialog) => dialog.accept());
+  await page.getByRole('button', { name: '删除文件夹 archive/moved', exact: true }).click();
+  await expect(page.getByRole('button', { name: '目录 archive/moved', exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole('checkbox', { name: '发布 archive/moved/renamed.md', exact: true }),
+  ).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('button', { name: '目录 archive', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: '目录 archive/moved', exact: true })).toHaveCount(
+    0,
+  );
+});

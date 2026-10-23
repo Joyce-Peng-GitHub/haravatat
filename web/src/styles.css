@@ -1345,11 +1345,11 @@ em {
   text-align: start;
   font-size: 12px;
 }
-.directory-row span:last-child {
+.directory-toggle span:last-child {
   min-width: 0;
   overflow-wrap: anywhere;
 }
-.directory-row:disabled {
+.directory-toggle:disabled {
   opacity: 1;
 }
 
@@ -1375,4 +1375,46 @@ em {
 .repository-token input[type='checkbox'] {
   width: auto;
   flex: none;
+}
+
+.directory-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 160px;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+}
+.directory-row {
+  flex-wrap: wrap;
+}
+.directory-row > .file-actions {
+  margin-inline-start: auto;
+}
+.upload-panel .checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: 12px;
+}
+.upload-panel input[type='checkbox'] {
+  width: auto;
+}
+
+@media (max-width: 700px) {
+  .directory-toggle {
+    flex-basis: 100%;
+  }
+  .directory-row > .file-actions {
+    width: 100%;
+    margin-inline-start: 0;
+    padding-inline-start: 22px;
+    justify-content: start;
+  }
 }

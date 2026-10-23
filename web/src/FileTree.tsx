@@ -12,32 +12,41 @@ interface Directory {
 export function FileTree({
   files,
   filter,
+  directories: storedDirectories,
+  renderDirectoryActions,
   renderFile,
 }: {
   files: File[];
   filter: string;
+  directories: string[];
+  renderDirectoryActions?: (path: string) => ReactNode;
   renderFile: (file: File, depth: number) => ReactNode;
 }) {
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const { root, directories } = useMemo(() => {
     const root: Directory = { path: '', name: '', directories: new Map(), files: [] };
     const directories: string[] = [];
-    for (const file of files) {
-      if (!file.path.toLowerCase().includes(filter.toLowerCase())) continue;
-      const parts = file.path.split('/');
+    const addDirectory = (path: string) => {
       let parent = root;
-      for (const name of parts.slice(0, -1)) {
-        const path = [parent.path, name].filter(Boolean).join('/');
+      for (const name of path.split('/').filter(Boolean)) {
+        const fullPath = [parent.path, name].filter(Boolean).join('/');
         if (!parent.directories.has(name)) {
-          parent.directories.set(name, { path, name, directories: new Map(), files: [] });
-          directories.push(path);
+          parent.directories.set(name, { path: fullPath, name, directories: new Map(), files: [] });
+          directories.push(fullPath);
         }
         parent = parent.directories.get(name)!;
       }
-      parent.files.push(file);
+      return parent;
+    };
+    for (const path of storedDirectories) {
+      if (path.toLowerCase().includes(filter.toLowerCase())) addDirectory(path);
+    }
+    for (const file of files) {
+      if (!file.path.toLowerCase().includes(filter.toLowerCase())) continue;
+      addDirectory(file.path.split('/').slice(0, -1).join('/')).files.push(file);
     }
     return { root, directories };
-  }, [files, filter]);
+  }, [files, filter, storedDirectories]);
   const children = (parent: Directory, depth: number): ReactNode => (
     <ul className="file-tree" aria-label={parent.path ? `目录 ${parent.path}` : '文件树'}>
       {[...parent.directories.values()]
@@ -46,24 +55,32 @@ export function FileTree({
           const open = Boolean(filter) || !collapsed.has(directory.path);
           return (
             <li key={directory.path}>
-              <button
+              <div
                 className="directory-row"
+                data-directory={directory.path}
                 style={{ paddingInlineStart: 17 + Math.min(depth, 6) * 14 }}
-                aria-label={`目录 ${directory.path}`}
-                aria-expanded={open}
-                onClick={() =>
-                  setCollapsed((old) => {
-                    const next = new Set(old);
-                    if (open) next.add(directory.path);
-                    else next.delete(directory.path);
-                    return next;
-                  })
-                }
-                disabled={Boolean(filter)}
               >
-                <span aria-hidden="true">{open ? '▾' : '▸'} ▱</span>
-                <span title={directory.path}>{directory.name}</span>
-              </button>
+                <button
+                  className="directory-toggle"
+                  aria-label={`目录 ${directory.path}`}
+                  aria-expanded={open}
+                  onClick={() =>
+                    setCollapsed((old) => {
+                      const next = new Set(old);
+                      if (open) next.add(directory.path);
+                      else next.delete(directory.path);
+                      return next;
+                    })
+                  }
+                  disabled={Boolean(filter)}
+                >
+                  <span aria-hidden="true">{open ? '▾' : '▸'} ▱</span>
+                  <span title={directory.path}>{directory.name}</span>
+                </button>
+                {renderDirectoryActions && (
+                  <div className="file-actions">{renderDirectoryActions(directory.path)}</div>
+                )}
+              </div>
               {open && children(directory, depth + 1)}
             </li>
           );
@@ -89,7 +106,7 @@ export function FileTree({
         </div>
       </div>
       {!root.files.length && !root.directories.size ? (
-        <p className="empty">没有匹配的文件。</p>
+        <p className="empty">没有匹配的文件或文件夹。</p>
       ) : (
         children(root, 0)
       )}

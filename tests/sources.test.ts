@@ -330,3 +330,120 @@ test('large multipart files round-trip through chunk storage and edits preserve 
     await close();
   }
 });
+
+test('persistent folders support nested creation, safe renames, conflicts and recursive deletion', async () => {
+  const { db, close } = await testDatabase();
+  await db.query("INSERT INTO users VALUES (1,'alice','Alice',''),(2,'bob','Bob','')");
+  await db.query(
+    "INSERT INTO sessions VALUES ($1,1,now()+interval '1 day'),($2,2,now()+interval '1 day')",
+    [hash('alice'), hash('bob')],
+  );
+  const app = await createApp({
+    db,
+    config: loadConfig({ NODE_ENV: 'test', DATABASE_URL: 'postgres://unused' }),
+  });
+  const req = (
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+    url: string,
+    payload?: object,
+    session = 'alice',
+  ) =>
+    app.inject({
+      method,
+      url,
+      payload,
+      cookies: { session },
+      headers: { origin: 'http://localhost:5173', 'x-haravatat-request': '1' },
+    });
+  try {
+    const id = (await req('POST', '/api/sources', { kind: 'upload', name: 'folders' })).json()
+      .source.id;
+    const base = `/api/sources/${id}`;
+    const state = async () => (await req('GET', base)).json();
+    assert.equal(
+      (await req('POST', `${base}/directory`, { path: 'notes/empty/nested' })).statusCode,
+      200,
+    );
+    assert.deepEqual((await state()).directories, ['notes', 'notes/empty', 'notes/empty/nested']);
+    assert.equal((await state()).files.length, 0);
+    assert.equal(
+      (await req('POST', `${base}/directory`, { path: 'other' }, 'bob')).statusCode,
+      404,
+    );
+    assert.equal((await req('POST', `${base}/directory`, { path: '../secret' })).statusCode, 400);
+    const original = await state();
+    for (const [method, url, body] of [
+      ['POST', '/directory', { path: 'notes' }],
+      ['PUT', '/file', { path: 'notes/empty', content: 'conflict' }],
+      ['POST', '/move', { from: 'notes', to: 'notes/inside' }],
+      ['POST', '/move', { from: 'notes/empty', to: 'notes' }],
+    ] as const) {
+      assert.equal((await req(method, base + url, body)).statusCode, 409);
+      assert.deepEqual(await state(), original);
+    }
+    assert.equal(
+      (await req('PUT', `${base}/file`, { path: 'notes/entry.md', content: '# content' }))
+        .statusCode,
+      200,
+    );
+    assert.equal(
+      (await req('POST', `${base}/directory`, { path: 'notes/entry.md/child' })).statusCode,
+      409,
+    );
+    const beforeLongMove = await state();
+    assert.equal(
+      (await req('POST', `${base}/move`, { from: 'notes', to: 'x'.repeat(495) })).statusCode,
+      400,
+    );
+    assert.deepEqual(await state(), beforeLongMove);
+
+    // Moving a directory retains empty descendants and the file content.
+    assert.equal(
+      (await req('POST', `${base}/move`, { from: 'notes', to: 'archive/renamed' })).statusCode,
+      200,
+    );
+    assert.deepEqual((await state()).directories, [
+      'archive',
+      'archive/renamed',
+      'archive/renamed/empty',
+      'archive/renamed/empty/nested',
+    ]);
+    assert.equal(
+      (await req('GET', `${base}/file?path=archive/renamed/entry.md`)).body,
+      '# content',
+    );
+    assert.equal(
+      (
+        await req('POST', `${base}/move`, {
+          from: 'archive/renamed/entry.md',
+          to: 'archive/renamed/new.md',
+        })
+      ).statusCode,
+      200,
+    );
+    assert.equal((await req('DELETE', `${base}/file?path=archive/renamed/new.md`)).statusCode, 200);
+    assert((await state()).directories.includes('archive/renamed'));
+    assert.equal(
+      (await req('POST', `${base}/move`, { from: 'archive/renamed/empty', to: 'empty' }))
+        .statusCode,
+      200,
+    );
+    assert((await state()).directories.includes('empty/nested'));
+    assert.equal((await req('DELETE', `${base}/file?path=empty`)).statusCode, 200);
+    assert(!(await state()).directories.some((path: string) => path.startsWith('empty')));
+    // Names with SQL wildcard characters must not affect neighboring paths.
+    for (const path of ['a%/inside', 'abc/inside', 'a_/inside'])
+      assert.equal((await req('POST', `${base}/directory`, { path })).statusCode, 200);
+    assert.equal((await req('DELETE', `${base}/file?path=a%25`)).statusCode, 200);
+    assert((await state()).directories.includes('abc/inside'));
+    assert((await state()).directories.includes('a_/inside'));
+    assert.equal((await req('DELETE', base)).statusCode, 200);
+    assert.equal(
+      (await db.query('SELECT * FROM directories WHERE source_id=$1', [id])).rows.length,
+      0,
+    );
+  } finally {
+    await app.close();
+    await close();
+  }
+});

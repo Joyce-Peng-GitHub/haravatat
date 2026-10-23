@@ -24,3 +24,5 @@ npm run dev
 自动使用服务器系统字体：本地预览运行 `node scripts/compose-system-fonts.mjs up --build -d --wait`；生产加 `--production`。脚本自动发现并只读挂载字体目录，无需逐个复制字体，后续启动也使用该命令。详情见部署文档。
 
 文档：[部署](docs/deployment.md) · [配置](docs/configuration.md) · [登录](docs/authentication.md) · [文件管理](docs/files.md) · [发布](docs/publishing.md) · [界面](docs/interface.md) · [开发进度](docs/development.md)。示例文件位于 examples/。
+
+上传工作区支持持久保存空文件夹，在文件树中创建、重命名、移动和递归删除文件夹。上传默认忽略任意层级以 `.` 开头的文件和文件夹，可取消勾选以完整上传。

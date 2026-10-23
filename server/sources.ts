@@ -15,6 +15,13 @@ import {
 } from './repository.js';
 import { readUpload, uploadLimits } from './uploads.js';
 import { readFiles, storeFile } from './storage.js';
+import {
+  directoryPaths,
+  readDirectories,
+  storeDirectories,
+  validateDirectories,
+  within,
+} from './directories.js';
 import { credentialStore } from './credentials.js';
 const tokenSchema = z
   .string()
@@ -136,7 +143,17 @@ export async function sourceRoutes(
         [id],
       )
     ).rows;
-    return { source, files, posts, credentialStorageAvailable: credentials.available };
+    return {
+      source,
+      files,
+      directories: await readDirectories(
+        db,
+        id,
+        files.map((file) => file.path as string),
+      ),
+      posts,
+      credentialStorageAvailable: credentials.available,
+    };
   });
   app.delete('/api/sources/:id', async (request) => {
     const user = await requireUser(db, request),
@@ -171,7 +188,23 @@ export async function sourceRoutes(
     db.transaction(async (tx) => {
       const source = await ownedSource(tx, id, userId, true);
       if (source.kind !== 'upload') throw new HttpError(409, '仓库来源请在远端修改后同步');
-      await writeFiles(tx, id, mutate(await sourceFiles(tx, id)));
+      const files = await sourceFiles(tx, id);
+      const directories = await readDirectories(
+        tx,
+        id,
+        files.map((file) => file.path),
+      );
+      const next = mutate(files);
+      const nextDirectories = directoryPaths(
+        next.map((file) => file.path),
+        directories,
+      );
+      validateDirectories(
+        next.map((file) => file.path),
+        nextDirectories,
+      );
+      await writeFiles(tx, id, next);
+      await storeDirectories(tx, id, nextDirectories);
     });
   app.post('/api/sources/:id/upload', async (request) => {
     const user = await requireUser(db, request),
@@ -198,15 +231,57 @@ export async function sourceRoutes(
     ]);
     return { ok: true };
   });
+  // Folder operations only change metadata; large file chunks stay inside PostgreSQL.
+  const changePaths = async (
+    id: string,
+    userId: string,
+    mutate: (
+      tx: Database,
+      files: string[],
+      directories: string[],
+    ) => Promise<{ files: string[]; directories: string[] }>,
+  ) =>
+    db.transaction(async (tx) => {
+      const source = await ownedSource(tx, id, userId, true);
+      if (source.kind !== 'upload') throw new HttpError(409, '仓库来源请在远端修改后同步');
+      const { rows } = await tx.query<{ path: string }>(
+        'SELECT path FROM files WHERE source_id=$1',
+        [id],
+      );
+      const files = rows.map((file) => file.path);
+      const next = await mutate(tx, files, await readDirectories(tx, id, files));
+      const directories = directoryPaths(next.files, next.directories);
+      validateDirectories(next.files, directories);
+      await storeDirectories(tx, id, directories);
+      await tx.query('UPDATE sources SET revision=revision+1 WHERE id=$1', [id]);
+    });
+  app.post('/api/sources/:id/directory', async (request) => {
+    const user = await requireUser(db, request),
+      id = sourceId(request.params);
+    const path = virtualPath(z.object({ path: z.string() }).parse(request.body).path);
+    await changePaths(id, user.id, async (_tx, files, directories) => {
+      if (files.includes(path) || directories.includes(path))
+        throw new HttpError(409, '目标路径已存在');
+      return { files, directories: [...directories, path] };
+    });
+    return { ok: true };
+  });
   app.delete('/api/sources/:id/file', async (request) => {
     const user = await requireUser(db, request),
       id = sourceId(request.params);
-    const { path: raw } = z.object({ path: z.string() }).parse(request.query);
-    const path = virtualPath(raw);
-    await changeFiles(id, user.id, (files) => {
-      const next = files.filter((f) => f.path !== path && !f.path.startsWith(`${path}/`));
-      if (next.length === files.length) throw new HttpError(404, '未找到文件或目录');
-      return next;
+    const path = virtualPath(z.object({ path: z.string() }).parse(request.query).path);
+    await changePaths(id, user.id, async (tx, files, directories) => {
+      if (!files.includes(path) && !directories.includes(path))
+        throw new HttpError(404, '未找到文件或目录');
+      const deleted = files.filter((file) => within(file, path));
+      await tx.query('DELETE FROM files WHERE source_id=$1 AND path=ANY($2::text[])', [
+        id,
+        deleted,
+      ]);
+      return {
+        files: files.filter((file) => !within(file, path)),
+        directories: directories.filter((directory) => !within(directory, path)),
+      };
     });
     return { ok: true };
   });
@@ -216,11 +291,31 @@ export async function sourceRoutes(
     const body = z.object({ from: z.string(), to: z.string() }).parse(request.body);
     const from = virtualPath(body.from),
       to = virtualPath(body.to);
-    await changeFiles(id, user.id, (files) => {
-      const moving = files.filter((f) => f.path === from || f.path.startsWith(`${from}/`));
-      if (!moving.length) throw new HttpError(404, '未找到文件或目录');
-      const next = files.filter((f) => !moving.includes(f));
-      return [...next, ...moving.map((f) => ({ ...f, path: to + f.path.slice(from.length) }))];
+    await changePaths(id, user.id, async (tx, files, directories) => {
+      if (!files.includes(from) && !directories.includes(from))
+        throw new HttpError(404, '未找到文件或目录');
+      if (from === to) return { files, directories };
+      if (directories.includes(from) && within(to, from))
+        throw new HttpError(409, '不能将文件夹移动到自身内部');
+      if (files.includes(to) || directories.includes(to))
+        throw new HttpError(409, '目标路径已存在');
+      const renamed = (path: string) => (within(path, from) ? to + path.slice(from.length) : path);
+      const next = { files: files.map(renamed), directories: directories.map(renamed) };
+      validateDirectories(next.files, next.directories);
+      const moving = files.filter((file) => within(file, from));
+      for (const path of moving) {
+        const target = renamed(path);
+        await tx.query(
+          'INSERT INTO files (source_id,path,content,byte_size) SELECT source_id,$3,content,byte_size FROM files WHERE source_id=$1 AND path=$2',
+          [id, path, target],
+        );
+        await tx.query(
+          'INSERT INTO file_chunks (source_id,path,ordinal,content) SELECT source_id,$3,ordinal,content FROM file_chunks WHERE source_id=$1 AND path=$2',
+          [id, path, target],
+        );
+      }
+      await tx.query('DELETE FROM files WHERE source_id=$1 AND path=ANY($2::text[])', [id, moving]);
+      return next;
     });
     return { ok: true };
   });

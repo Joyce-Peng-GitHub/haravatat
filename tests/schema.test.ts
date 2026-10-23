@@ -35,6 +35,7 @@ test('existing workspaces and files survive idempotent schema upgrades', async (
     await db.query(
       "INSERT INTO sources (id,user_id,name,kind,repository,branch) VALUES ('00000000-0000-4000-8000-000000000001',1,'legacy','github','alice/notes','main')",
     );
+    await db.query('DROP TABLE directories');
     await db.query('DROP TABLE repository_credentials');
     await db.query('ALTER TABLE sources DROP COLUMN auto_sync');
     await db.query('DROP TABLE file_chunks');
@@ -45,7 +46,12 @@ test('existing workspaces and files survive idempotent schema upgrades', async (
       Buffer.from('= Preserved'),
     ]);
     await migrate(db);
+    await db.query('INSERT INTO directories (source_id,path) VALUES ($1,$2)', [
+      '00000000-0000-4000-8000-000000000001',
+      'empty/nested',
+    ]);
     await migrate(db);
+    assert.equal((await db.query('SELECT path FROM directories')).rows[0].path, 'empty/nested');
     assert.equal(
       (await sourceFiles(db, '00000000-0000-4000-8000-000000000001'))[0].content.toString(),
       '= Preserved',

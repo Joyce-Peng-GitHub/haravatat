@@ -89,6 +89,7 @@ export interface Source {
   post_count?: number;
 }
 export interface Workspace {
+  directories: string[];
   credentialStorageAvailable: boolean;
   source: Source;
   files: {
