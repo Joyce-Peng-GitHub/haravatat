@@ -101,6 +101,21 @@ test('real Typst compiler builds dependencies and rejects reading outside projec
   );
 });
 
+test('missing requested fonts fail publication instead of silently producing a fallback PDF', async () => {
+  await assert.rejects(
+    nativeCompiler.compile(
+      [
+        {
+          path: 'main.typ',
+          content: Buffer.from('#set text(font: "Haravatat Missing Font")\nText'),
+        },
+      ],
+      'main.typ',
+    ),
+    /unknown font family: haravatat missing font/,
+  );
+});
+
 test('remote compiler streams a workspace larger than the former total and per-file limits', async () => {
   const app = await createCompilerApp();
   const url = await app.listen({ port: 0, host: '127.0.0.1' });

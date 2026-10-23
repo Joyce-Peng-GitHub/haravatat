@@ -20,6 +20,8 @@ Typst 包缓存通过 TYPST_PACKAGE_CACHE 提供，默认为一次性缓存；�
 
 测试覆盖 Markdown 图片快照与私有依赖隔离、跨入口链接、PDF 接口、编译失败回滚、并发修改拒绝、稳定文章 UUID、取消发布；真实 Typst CLI 测试包含跨目录 include、多页公式 PDF 和越界 read 拒绝。
 
-上传工作区内的 TTF/OTF 字体通过 --font-path 加入本次编译字体搜索；不会写入或影响其他用户的字体目录。
+上传工作区内的 TTF/OTF/TTC 字体通过 --font-path 加入本次编译字体搜索；不会写入或影响其他用户的字体目录。编译服务还支持管理员配置的 TYPST_FONT_PATHS（Linux 用冒号分隔），Compose 默认只读挂载 fonts/ 到 /fonts。宿主机安装的字体不会自动出现在容器中；字体家族名必须精确匹配，Noto Sans SC 与 Noto Sans CJK SC 是不同名字。
+
+Typst 0.15.1 对 unknown font family 只输出 warning，退出码仍为 0，默认使用后备字体。本服务将这类诊断视为发布失败，返回源文件位置及缺失家族名，保留已发布版本，避免无提示地改变排版。其他编译警告不自动升级为错误；存在字体但缺少某个字形时，Typst 自身的字形回退规则仍适用。
 
 内部编译协议使用流式 multipart 二进制文件传输，X-Typst-Entry 为 encodeURIComponent 编码的相对入口路径；编译服务复用上传的 1 GiB / 1024 文件校验。无需 Base64/JSON 大字符串，避免大文件的编码膨胀与 JavaScript 单字符串大小限制。接收/远程请求超时 300 秒，Typst 实际执行仍限 30 秒。Compose 编译容器提供 2 GiB tmpfs、6 GiB 内存上限，覆盖输入副本和编译开销；PDF 输出仍限制 32 MiB。应用和编译镜像须一起更新以匹配内部协议。

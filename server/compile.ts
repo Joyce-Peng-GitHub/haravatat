@@ -4,7 +4,7 @@ import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { mkdtemp, mkdir, writeFile, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, dirname } from 'node:path';
+import { join, dirname, delimiter } from 'node:path';
 import { HttpError } from './errors.js';
 import { validateFiles, virtualPath, type SourceFile } from './files.js';
 import { boundedBody } from './repository.js';
@@ -79,7 +79,7 @@ export const nativeCompiler: Compiler = {
         '--package-cache-path',
         process.env.TYPST_PACKAGE_CACHE || join(directory, 'cache'),
         '--font-path',
-        root,
+        [root, process.env.TYPST_FONT_PATHS].filter(Boolean).join(delimiter),
         '--jobs',
         '1',
         '--diagnostic-format',
@@ -88,7 +88,7 @@ export const nativeCompiler: Compiler = {
         output,
       ];
       try {
-        await promisify(execFile)(
+        const { stderr } = await promisify(execFile)(
           'prlimit',
           [
             '--as=4294967296',
@@ -112,6 +112,11 @@ export const nativeCompiler: Compiler = {
             cwd: root,
           },
         );
+        if (/warning: unknown font family:/i.test(stderr)) {
+          throw Object.assign(new Error('Missing requested font'), {
+            stderr: `缺少文档指定的字体，请上传字体文件或联系管理员安装。\n${stderr}`,
+          });
+        }
       } catch (error) {
         const diagnostic =
           error && typeof error === 'object' && 'stderr' in error

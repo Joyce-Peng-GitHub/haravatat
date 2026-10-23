@@ -32,6 +32,23 @@ docker compose up --build -d
 
 应用访问公网用于 OAuth/仓库下载；数据库和编译服务仅连接各自内部网络。编译容器无数据库与 GitHub 密钥、无公网网络，具有只读系统盘、临时目录和进程限制。CJK 和 DejaVu 字体随容器安装，Typst 内嵌字体也可用。Typst 编译源文件访问范围受 --root 限制。
 
+### Typst 字体
+
+Docker 不会继承 Windows/WSL/宿主机的字体。镜像自带的中文家族名是 Noto Sans CJK SC / Noto Serif CJK SC，不能替代文档指定的 Noto Sans SC / Noto Serif SC。将有权在服务器使用的 .ttf/.otf/.ttc 文件复制到项目 fonts/（已忽略 Git），Compose 只读挂载该目录，TYPST_FONT_PATHS=/fonts；不需要重建镜像。首次增加挂载需重新创建编译容器：
+
+```bash
+mkdir -p fonts
+# 当前 Windows + WSL 环境的示例；其他部署按实际字体位置复制
+cp /mnt/c/Windows/Fonts/NotoSansSC-VF.ttf fonts/
+cp /mnt/c/Windows/Fonts/NotoSerifSC-VF.ttf fonts/
+docker compose up -d compiler
+docker compose exec compiler typst fonts --font-path /fonts
+```
+
+应在列表中看到 Noto Sans SC、Noto Serif SC。Typst 使用字体内部家族名，不使用文件名或 VF 后缀。每次编译重新扫描字体目录，添加字体后重新发布即可；也可把字体放入用户工作区，随来源快照扫描。不要把整个宿主机或用户目录挂载给编译器。备份时同时保存 fonts/，数据库备份不包含这些管理员字体。
+
+Typst CLI 对缺失家族只返回 warning 和成功退出码；服务器现在将 unknown font family 诊断升级为发布失败，保留上次发布版本并显示缺失名称。此策略不会把其他警告或正常的字形回退都视为错误。
+
 ### Typst 包
 
 预先把所需 @preview 包缓存放入 typst_packages Docker volume，目录结构与 Typst CLI 的 --package-cache-path 一致（preview/name/version）。编译容器以只读形式挂载，离线运行。新建 volume 默认为空，服务 health 为 healthy 不代表文章依赖已缓存。缓存必须包含文章引用的精确版本及其传递依赖。

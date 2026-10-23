@@ -62,6 +62,9 @@ services:
     tmpfs: ['/tmp:size=2g,uid=1000,gid=1000']
     volumes:
       - typst_packages:/packages:ro
+      - ./fonts:/fonts:ro
+    environment:
+      TYPST_FONT_PATHS: /fonts
     cap_drop: [ALL]
     security_opt: ['no-new-privileges:true']
     mem_limit: 6g
