@@ -1,4 +1,4 @@
-FROM node:24-trixie-slim AS dependencies
+FROM node:24.22.1-trixie-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -13,14 +13,18 @@ RUN npm run build
 FROM dependencies AS production-dependencies
 RUN npm prune --omit=dev --no-audit && npm cache clean --force
 
-FROM node:24-trixie-slim AS application
+FROM node:24.22.1-trixie-slim AS application
 ARG DEBIAN_MIRROR=https://deb.debian.org
 # Bootstrap verified HTTPS package downloads using Node's bundled Mozilla CA roots.
 RUN node -e "require('fs').writeFileSync('/tmp/node-ca.pem', require('tls').rootCertificates.join('\\n'))" \
     && sed -i "s|http://deb.debian.org|${DEBIAN_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::https::CaInfo=/tmp/node-ca.pem update \
     && apt-get -o Acquire::https::CaInfo=/tmp/node-ca.pem install -y --no-install-recommends git ca-certificates util-linux \
+    && sed -i '/emSign_ECC_Root_CA_-_G3.crt/s/^/!/' /etc/ca-certificates.conf \
+    && update-ca-certificates --fresh \
     && rm -rf /var/lib/apt/lists/* /tmp/node-ca.pem
+COPY scripts/check-ca-trust.mjs /tmp/check-ca-trust.mjs
+RUN node /tmp/check-ca-trust.mjs && rm /tmp/check-ca-trust.mjs
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -33,9 +37,11 @@ EXPOSE 3000
 CMD ["node", "--import", "tsx", "server/index.ts"]
 
 FROM ghcr.io/typst/typst:0.15.1 AS typst
-FROM node:24-trixie-slim AS compiler
+FROM node:24.22.1-trixie-slim AS compiler
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends util-linux fonts-noto-cjk fonts-dejavu-core ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux fonts-noto-cjk fonts-dejavu-core ca-certificates && sed -i '/emSign_ECC_Root_CA_-_G3.crt/s/^/!/' /etc/ca-certificates.conf && update-ca-certificates --fresh && rm -rf /var/lib/apt/lists/*
+COPY scripts/check-ca-trust.mjs /tmp/check-ca-trust.mjs
+RUN node /tmp/check-ca-trust.mjs && rm /tmp/check-ca-trust.mjs
 COPY --from=typst /bin/typst /usr/local/bin/typst
 COPY package.json package-lock.json ./
 COPY --from=production-dependencies /app/node_modules ./node_modules
