@@ -37,3 +37,9 @@ Schema 初始化使用事务和 PostgreSQL advisory lock。后续改变已有表
 工作区配额集中在 shared/limits.ts（1 GiB / 1024 文件，无独立单文件上限），前后端共用。storage.ts 封装内联/分块 PostgreSQL 文件存储；uploads.ts 供应用上传与内部编译服务复用流式读取和配额校验。Docker 三个构建目标均包含 shared/。容量修改需同时检查数据库传输、编译协议、容器资源和 docs/files.md、docs/deployment.md。
 
 credentials.ts 封装仓库凭据的加密存取，密文与 sources 分表，来源 API 不读取或返回密文。数据库新增 auto_sync 字段及 repository_credentials 表，启动迁移保持可重入；既有工作区默认关闭自动同步。工作台仅在进入仓库时调用已有同步 API，服务端没有定时任务。FileTree.tsx 处理目录结构、筛选和折叠，入口选择与发布仍由 Dashboard 管理。
+
+## Markdown 解析维护
+
+发布与阅读共享 shared/markdown.ts 的括号数学 tokenizer，并启用 remark-math。新增语法必须验证「原始 Markdown → 发布快照 → React 阅读」全链路，不能仅测试未发布的原文。web/src/markdown-config.ts 提供实际阅读插件配置；高亮和 alert 只作用于展示 AST。依赖使用 KaTeX 0.19.0，并通过 npm override 让 rehype-katex 的排版引擎与导入的 CSS/字体使用同一版本，避免嵌套旧版本引擎造成样式不匹配。
+
+tests/markdown.test.ts 运行真实发布转换和 React 阅读插件，覆盖各类公式定界符、嵌套引用内的多行公式、代码原文、公式资源隔离、嵌套格式高亮、五类 alert、GFM 及不可信公式/HTML。浏览器测试还经过上传和发布接口，检查公式 DOM、字体加载及手机页面宽度。

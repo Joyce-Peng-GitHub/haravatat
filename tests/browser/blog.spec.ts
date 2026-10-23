@@ -61,7 +61,25 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
       {
         name: 'article.md',
         mimeType: 'text/markdown',
-        buffer: Buffer.from('# 浏览器发布\n\n**你好，世界**\n<script>window.xss=1</script>'),
+        buffer: Buffer.from(
+          [
+            '# 浏览器发布\n\n**你好，世界**\n<script>window.xss=1</script>',
+            String.raw`$\LaTeX$ 与 \(a_1+\frac{1}{2}\)`,
+            '$$\n\\sum_{i=1}^n i\n$$',
+            String.raw`\[\int_0^1 x\,dx\]`,
+            '```math\n\\sqrt{2}\n```',
+            '$$x^2$$',
+            '~~已删除~~ ==**高亮文字**==',
+            '> [!WARNING]\n> 请注意正文中的公式 $x_1$。',
+            '> [!NOTE]\n> 这是一条提示。',
+            '> [!TIP]\n> 这是一条建议。',
+            '> [!IMPORTANT]\n> 这是一条重要说明。',
+            '> [!CAUTION]\n> 这是一条注意事项。',
+            '`$literal$ \\(literal\\) ==literal==`',
+            '```text\n$literal$ \\[literal\\] ==literal==\n```',
+            String.raw`\[\underbrace{a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a+a}_{\text{long equation}}\]`,
+          ].join('\n\n'),
+        ),
       },
       {
         name: 'dependency.typ',
@@ -89,7 +107,24 @@ test('OAuth login, folder upload, editing, selection, publishing and HTTPS Git s
   await page.screenshot({ path: 'test-results/mobile-dashboard.png', fullPage: true });
   await page.setViewportSize({ width: 1440, height: 1050 });
   await page.getByRole('link', { name: '阅读', exact: true }).click();
-  await expect(page.locator('.markdown-body strong')).toHaveText('你好，世界');
+  await expect(page.locator('.markdown-body strong').first()).toHaveText('你好，世界');
+  await expect(page.locator('.markdown-body mark strong')).toHaveText('高亮文字');
+  await expect(page.locator('.markdown-body del')).toHaveText('已删除');
+  await expect(page.locator('.markdown-body .katex')).toHaveCount(8);
+  await expect(page.locator('.markdown-body .katex-display')).toHaveCount(5);
+  await expect(page.locator('.markdown-body .katex-error')).toHaveCount(0);
+  await expect(page.locator('.markdown-alert')).toHaveCount(5);
+  await expect(page.locator('.markdown-alert-warning')).toContainText('警告');
+  await expect(page.locator('.markdown-body pre code')).toContainText('$literal$');
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.fonts.check('16px KaTeX_Main'))).toBe(true);
+  await page.screenshot({ path: 'test-results/markdown-extensions.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await page.screenshot({ path: 'test-results/mobile-markdown-extensions.png', fullPage: true });
+  await page.setViewportSize({ width: 1440, height: 1050 });
   expect(await page.evaluate(() => 'xss' in window)).toBe(false);
   await page.getByRole('link', { name: '我的工作台' }).click();
   await page.getByRole('button', { name: /浏览器测试笔记/ }).click();

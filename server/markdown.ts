@@ -1,6 +1,8 @@
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
+import { remarkBracketMath } from '../shared/markdown.js';
 import remarkStringify from 'remark-stringify';
 import { visit } from 'unist-util-visit';
 import { posix } from 'node:path';
@@ -23,8 +25,13 @@ export function renderMarkdown(
   posts: Map<string, string>,
 ) {
   const content = files.find((f) => f.path === entry)!.content.toString('utf8');
-  const processor = unified().use(remarkParse).use(remarkGfm).use(remarkStringify);
-  const tree = processor.parse(content),
+  const processor = unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkMath)
+    .use(remarkBracketMath)
+    .use(remarkStringify);
+  const tree = processor.runSync(processor.parse(content), content),
     assets = new Map<string, Asset>();
   let title = posix.basename(entry).replace(/\.(md|markdown)$/i, '');
   let hasHeading = false;

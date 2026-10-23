@@ -982,6 +982,51 @@ em {
   border-top: 1px solid var(--line);
   margin: 30px 0;
 }
+.markdown-body mark {
+  color: inherit;
+  background: #f6e7a1;
+  padding: 0.05em 0.15em;
+  border-radius: 2px;
+}
+.markdown-body .katex {
+  overflow-wrap: normal;
+  line-height: normal;
+}
+.markdown-body .katex-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.35em 0;
+}
+.markdown-alert {
+  --alert-color: #346491;
+  margin: 1.4em 0;
+  border-left: 4px solid var(--alert-color);
+  border-radius: 0 5px 5px 0;
+  padding: 12px 20px;
+  background: color-mix(in srgb, var(--alert-color) 6%, white);
+}
+.markdown-alert-tip {
+  --alert-color: #316948;
+}
+.markdown-alert-important {
+  --alert-color: #7657a0;
+}
+.markdown-alert-warning {
+  --alert-color: #946707;
+}
+.markdown-alert-caution {
+  --alert-color: #ae4141;
+}
+.markdown-body .markdown-alert-title {
+  color: var(--alert-color);
+  font-weight: 600;
+  margin: 0 0 0.5em;
+}
+.markdown-alert > :last-child {
+  margin-bottom: 0;
+}
 .pdf-reader {
   width: 100%;
   background: white;

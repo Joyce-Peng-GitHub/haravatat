@@ -4,7 +4,11 @@ POST /api/sources/:id/publish 接收 {entries: [{path, title?}]}，最多 30 个
 
 发布先读取一致的来源快照，在事务外编译，再取得行锁检查 revision。全部入口成功才一起替换文章；任意入口编译失败或草稿并发变化返回错误，保留上次成功发布。发布本身推进 revision，避免并发发布互相覆盖。未改变的入口保持相同文章 UUID。标题可在发布界面自定义；Markdown 默认为首个一级标题，Typst 默认为文件名。
 
-Markdown 使用 GFM 语法，React 渲染时禁止原始 HTML，链接限制安全协议。解析 AST 处理图片、链接、引用式定义；文章仅公开实际引用的 PNG/JPEG/GIF/WebP/AVIF 图片快照，草稿、模板、数据文件不通过公开路由暴露。相对文章链接仅指向同次选中的入口；缺失或不支持的本地链接置空。不提供 YAML front matter、数学 Markdown 扩展或 SVG 直接嵌入。
+Markdown 使用 GFM 语法，React 渲染时禁止原始 HTML，链接限制安全协议。解析 AST 处理图片、链接、引用式定义；文章仅公开实际引用的 PNG/JPEG/GIF/WebP/AVIF 图片快照，草稿、模板、数据文件不通过公开路由暴露。相对文章链接仅指向同次选中的入口；缺失或不支持的本地链接置空。不提供 YAML front matter 或 SVG 直接嵌入。
+
+数学公式通过 remark-math、共享的括号公式 tokenizer 与 rehype-katex 排版。支持 $...$、$$...$$（同一行或多行）、\(...\)、\[...\] 及 math 标记的围栏代码块。后端发布与前端使用相同解析规则，发布时保留 TeX 命令、下标和括号公式的显示模式；公式内的 Markdown 图片/链接标记不会作为资源引用解析。普通代码块与行内代码中的公式标记保持原文。KaTeX CSS/字体随前端构建，不依赖第三方 CDN；输出包含 MathML，trust=false、maxExpand=1000、maxSize=20，不启用用户 HTML 或外部资源指令。非法/不支持的公式显示错误原文，不使整个阅读页崩溃。
+
+GFM 已提供 ~~删除线~~、表格、任务列表和脚注；阅读器增加 remark-flexible-markers 的 ==高亮== 与 GitHub 风格五类 alert block，语法示例见 markdown.md。高亮、alert 只在展示 AST 上变换，发布快照保留其 Markdown 标记；原始 HTML 仍不执行。
 
 Typst 在独立内部编译服务生成 PDF；前端使用 PDF.js canvas + 文字层逐页竖向渲染，阅读页面使用浏览器文档滚动，无内嵌 PDF viewer 和工具栏。PDF 保持固定排版，在窄屏缩放到内容宽度；并非文字重排。
 

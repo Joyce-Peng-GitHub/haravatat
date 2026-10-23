@@ -1,7 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { markdownPlugins, htmlPlugins } from './markdown-config';
+import 'katex/dist/katex.min.css';
 import { api, type Post, date, errorMessage } from './api';
 const PdfReader = lazy(() =>
   import('./PdfReader').then((module) => ({ default: module.PdfReader })),
@@ -222,7 +223,8 @@ export function Article() {
           ) : (
             <article className="markdown-body">
               <Markdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={markdownPlugins}
+                rehypePlugins={htmlPlugins}
                 skipHtml
                 urlTransform={(url) => {
                   const safe = defaultUrlTransform(url);
