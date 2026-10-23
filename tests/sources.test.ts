@@ -7,18 +7,10 @@ import { testDatabase } from './database.js';
 import { MAX_FILES, MAX_SOURCE_BYTES, virtualPath, validateFiles } from '../server/files.js';
 
 test('virtual paths reject traversal, duplicates, directory conflicts and quotas', () => {
-  for (const path of [
-    '../secret',
-    '/etc/passwd',
-    'a/../b',
-    'a\\b',
-    'a//b',
-    '.git/config',
-    'C:/file',
-    'a\0b',
-  ])
+  for (const path of ['../secret', '/etc/passwd', 'a/../b', 'a\\b', 'a//b', 'C:/file', 'a\0b'])
     assert.throws(() => virtualPath(path));
   assert.equal(virtualPath('笔记/定理.typ'), '笔记/定理.typ');
+  assert.equal(virtualPath('notes/.git/config'), 'notes/.git/config');
   assert.throws(() =>
     validateFiles([
       { path: 'a', content: Buffer.from('x') },
@@ -273,13 +265,13 @@ test('large multipart files round-trip through chunk storage and edits preserve 
       'POST',
       `${base}/upload`,
       multipart([
-        { path: 'notes/.git/config', content: Buffer.from('metadata') },
+        { path: 'notes/../config', content: Buffer.from('metadata') },
         { path: 'valid.md', content: Buffer.from('# Must not be partially saved') },
       ]),
       'multipart/form-data; boundary=test-boundary',
     );
     assert.equal(invalid.statusCode, 400, invalid.body);
-    assert.match(invalid.json().error, /\.git/);
+    assert.match(invalid.json().error, /相对路径/);
     assert.equal((await req('GET', base)).json().source.revision, revision);
     assert.equal((await req('GET', base)).json().files.length, 1);
     const overflow = await req(

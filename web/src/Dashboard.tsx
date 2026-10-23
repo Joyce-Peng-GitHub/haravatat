@@ -29,6 +29,7 @@ export function Dashboard() {
     [fetching, setFetching] = useState(false),
     [filter, setFilter] = useState(''),
     [prefix, setPrefix] = useState('');
+  const [ignoreHidden, setIgnoreHidden] = useState(true);
   const [automaticSyncing, setAutomaticSyncing] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ loaded: number; total: number } | null>(
     null,
@@ -189,7 +190,9 @@ export function Dashboard() {
     if (!files?.length || !sourceId) return;
     const chosen = Array.from(files),
       list = chosen.filter(
-        (file) => !(file.webkitRelativePath || file.name).split('/').includes('.git'),
+        (file) =>
+          !ignoreHidden ||
+          !(file.webkitRelativePath || file.name).split('/').some((part) => part.startsWith('.')),
       ),
       skipped = chosen.length - list.length,
       base = prefix.trim().replace(/\/$/, '');
@@ -198,7 +201,7 @@ export function Dashboard() {
       async () => {
         setUploadProgress(null);
         if (!list.length)
-          throw new Error('没有可上传的文件：已跳过 Git 元数据，请选择文章和依赖文件。');
+          throw new Error('没有可上传的文件：已忽略所有隐藏文件和文件夹。可取消勾选后重试。');
         const nextFiles = new Map(workspace?.files.map((file) => [file.path, file.size]));
         for (const file of list) {
           const path = [base, file.webkitRelativePath || file.name].filter(Boolean).join('/');
@@ -227,7 +230,7 @@ export function Dashboard() {
           setUploadProgress(null);
         }
       },
-      `文件已上传。勾选入口后发布，线上文章才会更新。${skipped ? ` 已跳过 ${skipped} 个 Git 元数据文件。` : ''}`,
+      `文件已上传。勾选入口后发布，线上文章才会更新。${skipped ? ` 已跳过 ${skipped} 个隐藏文件。` : ''}`,
     ).finally(() => {
       if (fileInput.current) fileInput.current.value = '';
       if (folderInput.current) folderInput.current.value = '';
@@ -640,8 +643,18 @@ export function Dashboard() {
                       onChange={(event) => upload(event.target.files)}
                     />
                   </div>
+                  <label className="checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={ignoreHidden}
+                      disabled={Boolean(busy)}
+                      onChange={(event) => setIgnoreHidden(event.target.checked)}
+                    />
+                    忽略隐藏文件和文件夹
+                  </label>
                   <small>
-                    工作区 1 GiB / 1024 文件 · 单文件无独立大小限制 · 自动跳过 .git · 空目录不保存
+                    工作区 1 GiB / 1024 文件 · 单文件无独立大小限制 · 隐藏项指任意层级以 .
+                    开头的名称
                   </small>
                 </div>
               )}

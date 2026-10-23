@@ -21,7 +21,7 @@ test('invalid multipart paths consume the remaining bounded stream before return
   });
   const address = await app.listen({ host: '127.0.0.1', port: 0 });
   try {
-    for (const path of ['notes/.git/config', '%invalid', 'notes/../secret']) {
+    for (const path of ['/absolute/path', '%invalid', 'notes/../secret']) {
       const filename = path === '%invalid' ? path : encodeURIComponent(path);
       let fullySent = false;
       async function* body() {

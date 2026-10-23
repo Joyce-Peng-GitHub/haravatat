@@ -9,7 +9,7 @@ export interface SourceFile {
 }
 export function virtualPath(path: string): string {
   if (!validWorkspacePath(path))
-    throw new HttpError(400, '文件路径必须是工作区内的相对路径，不能包含 .. 或 .git');
+    throw new HttpError(400, '文件路径必须是工作区内的相对路径，不能包含 ..、空分段或非法字符');
   return path;
 }
 export function validateFiles(files: SourceFile[]) {

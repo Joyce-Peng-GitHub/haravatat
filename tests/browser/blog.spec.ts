@@ -3,10 +3,15 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-test('folder uploads omit Git metadata and finish with nested paths intact', async ({ page }) => {
+test('folder uploads optionally ignore all hidden paths and finish with nested paths intact', async ({
+  page,
+}) => {
   const directory = await mkdtemp(join(tmpdir(), 'haravatat-folder-'));
   const folder = join(directory, 'notes');
   await mkdir(join(folder, '.git', 'objects'), { recursive: true });
+  await mkdir(join(folder, '课程', '.cache'), { recursive: true });
+  await writeFile(join(folder, '课程', '.cache', 'data'), 'hidden nested file');
+  await writeFile(join(folder, '.env'), 'EXAMPLE=true');
   await mkdir(join(folder, '课程'), { recursive: true });
   await writeFile(join(folder, '.git', 'config'), 'private repository metadata');
   await writeFile(join(folder, '.git', 'objects', 'pack'), Buffer.alloc(4 * 1024 * 1024));
@@ -30,11 +35,12 @@ test('folder uploads omit Git metadata and finish with nested paths intact', asy
     await page.getByLabel('来源名称').fill('文件夹回归测试');
     await page.getByRole('button', { name: '创建来源' }).click();
     await expect(page.getByRole('heading', { name: '文件夹回归测试' })).toBeVisible();
+    await expect(page.getByRole('checkbox', { name: '忽略隐藏文件和文件夹' })).toBeChecked();
     await page.locator('input[webkitdirectory]').setInputFiles(folder);
     await expect(page.getByText(/文件已上传。勾选入口后发布，线上文章才会更新。/)).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText(/已跳过 2 个 Git 元数据文件/)).toBeVisible();
+    await expect(page.getByText(/已跳过 4 个隐藏文件/)).toBeVisible();
     await expect(page.getByRole('checkbox', { name: '发布 notes/课程/文章.md' })).toBeVisible();
     const workspace = await page.evaluate(async () => {
       const id = new URL(location.href).searchParams.get('source');
@@ -59,6 +65,21 @@ test('folder uploads omit Git metadata and finish with nested paths intact', asy
     await page.unroute('**/api/sources/*/upload');
     await page.locator('input[webkitdirectory]').setInputFiles(folder);
     await expect(page.getByText(/文件已上传。勾选入口后发布，线上文章才会更新。/)).toBeVisible();
+    await page.getByRole('checkbox', { name: '忽略隐藏文件和文件夹' }).uncheck();
+    await page.locator('input[webkitdirectory]').setInputFiles(folder);
+    await expect(page.getByText(/文件已上传。勾选入口后发布，线上文章才会更新。/)).toBeVisible();
+    const complete = await page.evaluate(async () => {
+      const id = new URL(location.href).searchParams.get('source');
+      return (await fetch(`/api/sources/${id}`)).json();
+    });
+    expect(complete.files.map((file: { path: string }) => file.path).sort()).toEqual([
+      'notes/.env',
+      'notes/.git/config',
+      'notes/.git/objects/pack',
+      'notes/image.bin',
+      'notes/课程/.cache/data',
+      'notes/课程/文章.md',
+    ]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
