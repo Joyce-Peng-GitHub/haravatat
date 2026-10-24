@@ -5,8 +5,9 @@
 ## 开发约定
 
 - 每次修改代码，同步更新 docs/ 中相关文档，并一起提交。
-- 在 codex/multi-user-typst-blog 分支开发，完成一个可验证的小部分后 commit & push。
+- 贡献流程见 [CONTRIBUTING.md](../CONTRIBUTING.md)，AI agent 还应阅读 [AGENTS.md](../AGENTS.md)。每次修改前，从最新 origin/main 创建符合 conventional branch 规范的新分支，完成后提交 PR 到 main。遵守 main 与版本标签保护和合并后分支自动清理配置。
 - 提交信息使用英文 Conventional Commits。
+- CI 安装 Chromium 及系统依赖可能耗时十几分钟，属于正常现象；应观察日志并等待完成，不要仅因耗时较长就取消或重启。
 - 默认公开浏览文章；用户仅管理自己名下的来源和文件，未来可添加文章访问控制。
 - HTTPS Git 仓库来源支持手动同步或打开工作台时自动同步，公开仓库无需 token，私有仓库可单次提供 PAT 或显式加密保存。
 
